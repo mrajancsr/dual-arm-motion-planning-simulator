@@ -10,12 +10,14 @@ class TwoLinkArm:
         self.L2 = L2
         self.name = name
 
+    # Given (theta_1, theta_2) --> (x,y)
     def forward_kinematics(self, theta1: float, theta2: float):
         x = self.L1 * np.cos(theta1) + self.L2 * np.cos(theta1 + theta2)
         y = self.L1 * np.sin(theta1) + self.L2 * np.sin(theta1 + theta2)
 
         return np.array([x, y])
 
+    # Given (x,y) --> (theta_1, theta_2) via geometric solution
     def ik_geometric(self, x: float, y: float):
         L1, L2 = self.L1, self.L2
         r2 = x * x + y * y
@@ -36,6 +38,7 @@ class TwoLinkArm:
             sols.append((t1, t2))
         return sols  # [(01,02)_elbow_up, (01,02)_elbow_down]
 
+    # Given (theta_1, theta_2) --> Jacobian matrix
     def jacobian(self, t1: float, t2: float) -> np.ndarray:
         s1, c1 = np.sin(t1), np.cos(t1)
         s12, c12 = np.sin(t1 + t2), np.cos(t1 + t2)
@@ -48,6 +51,7 @@ class TwoLinkArm:
         )
         return J
 
+    # Given (x,y) --> (theta_1, theta_2) via iterative solution
     def ik_iterative(
         self,
         x_goal: float,
@@ -173,17 +177,28 @@ class DualArm:
 
 
 if __name__ == "__main__":
+    # Import the new modules
+    from workspace_generator import WorkspaceGenerator, DualArmWorkspaceGenerator
+    from cspace_generator import CSpaceGenerator, DualArmCSpaceGenerator
+    
+    print("=== Dual-Arm Motion Planning Simulator Demo ===\n")
+    
+    # Create dual arm system
     dual = DualArm(L1=1.0, L2=0.7, separation=2.0)
+    print("Created dual-arm system with L1=1.0, L2=0.7, separation=2.0")
 
     # Define goal positions for each arm
     left_goal = np.array([-0.5, 1.0])
     right_goal = np.array([1.5, 1.0])
+    print(f"Left goal: {left_goal}")
+    print(f"Right goal: {right_goal}")
 
     # --- Transform goals into each arm's local coordinate frame ---
     left_goal_local = left_goal - dual.left_base
     right_goal_local = right_goal - dual.right_base
 
     # --- Run IK in local coordinates ---
+    print("\nComputing inverse kinematics...")
     left_angles = dual.left_arm.ik_iterative(
         left_goal_local[0],
         left_goal_local[1],
@@ -197,6 +212,37 @@ if __name__ == "__main__":
         alpha=0.6,
     )
 
-    # Plot results
     if left_angles and right_angles:
+        print(f"Left arm angles: {np.rad2deg(left_angles)} degrees")
+        print(f"Right arm angles: {np.rad2deg(right_angles)} degrees")
+        
+        # Plot basic arm configuration
+        print("\nPlotting arm configuration...")
         dual.plot_arms(left_angles, right_angles, left_goal, right_goal)
+        
+        # Demonstrate workspace visualization
+        print("\nGenerating workspace visualizations...")
+        print("1. Single arm workspace...")
+        ws_gen = WorkspaceGenerator(dual.left_arm, resolution=50)
+        ws_gen.plot_workspace(show_boundary=True, show_points=True)
+        
+        print("2. Dual arm workspace...")
+        dual_ws_gen = DualArmWorkspaceGenerator(dual, resolution=50)
+        dual_ws_gen.plot_dual_workspace(show_boundary=True, show_points=True)
+        
+        # Demonstrate C-space visualization
+        print("\nGenerating configuration space visualizations...")
+        print("3. Single arm C-space...")
+        cspace_gen = CSpaceGenerator(dual.left_arm, resolution=50)
+        cspace_gen.plot_cspace(show_invalid=True)
+        
+        print("4. C-space heatmap...")
+        cspace_gen.plot_cspace_heatmap()
+        
+        print("5. Dual arm C-space (2D projections)...")
+        dual_cspace_gen = DualArmCSpaceGenerator(dual, resolution=20)
+        dual_cspace_gen.plot_dual_cspace_2d()
+        
+        print("\nDemo completed! Check the generated plots.")
+    else:
+        print("Failed to find valid inverse kinematics solutions.")
