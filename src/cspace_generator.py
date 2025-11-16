@@ -354,24 +354,43 @@ class DualArmCSpaceGenerator:
         # Generate sample configurations
         left_theta1, left_theta2, right_theta1, right_theta2, valid = self.generate_dual_cspace()
         
-        # Plot left arm C-space
-        left_valid = valid
-        ax1.scatter(left_theta1[left_valid], left_theta2[left_valid], 
-                   c='blue', s=1, alpha=0.6, label='Valid Configurations')
-        ax1.set_xlabel('Left Theta1 (radians)')
-        ax1.set_ylabel('Left Theta2 (radians)')
-        ax1.set_title('Left Arm C-space')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # Plot right arm C-space
-        ax2.scatter(right_theta1[left_valid], right_theta2[left_valid], 
-                   c='red', s=1, alpha=0.6, label='Valid Configurations')
-        ax2.set_xlabel('Right Theta1 (radians)')
-        ax2.set_ylabel('Right Theta2 (radians)')
-        ax2.set_title('Right Arm C-space')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+        # Convert valid to boolean array and ensure same length
+        if len(valid) > 0:
+            valid_bool = np.array(valid, dtype=bool)
+            # Ensure arrays have same length
+            min_len = min(len(left_theta1), len(left_theta2), len(right_theta1), len(right_theta2), len(valid_bool))
+            left_theta1 = left_theta1[:min_len]
+            left_theta2 = left_theta2[:min_len]
+            right_theta1 = right_theta1[:min_len]
+            right_theta2 = right_theta2[:min_len]
+            valid_bool = valid_bool[:min_len]
+            
+            # Plot left arm C-space
+            if np.any(valid_bool):
+                ax1.scatter(left_theta1[valid_bool], left_theta2[valid_bool], 
+                           c='blue', s=1, alpha=0.6, label='Valid Configurations')
+            ax1.set_xlabel('Left Theta1 (radians)')
+            ax1.set_ylabel('Left Theta2 (radians)')
+            ax1.set_title('Left Arm C-space')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Plot right arm C-space
+            if np.any(valid_bool):
+                ax2.scatter(right_theta1[valid_bool], right_theta2[valid_bool], 
+                           c='red', s=1, alpha=0.6, label='Valid Configurations')
+            ax2.set_xlabel('Right Theta1 (radians)')
+            ax2.set_ylabel('Right Theta2 (radians)')
+            ax2.set_title('Right Arm C-space')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+        else:
+            ax1.set_xlabel('Left Theta1 (radians)')
+            ax1.set_ylabel('Left Theta2 (radians)')
+            ax1.set_title('Left Arm C-space (No valid configs)')
+            ax2.set_xlabel('Right Theta1 (radians)')
+            ax2.set_ylabel('Right Theta2 (radians)')
+            ax2.set_title('Right Arm C-space (No valid configs)')
         
         plt.suptitle('Dual-Arm Configuration Space (2D Projections)')
         plt.tight_layout()

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,6 +83,20 @@ class TwoLinkArm:
 
         return None
 
+    def get_num_joints(self) -> int:
+        """Get the number of joints (2 for 2-link arm)."""
+        return 2
+    
+    def get_joint_limits(self) -> List[Tuple[float, float]]:
+        """
+        Get joint angle limits.
+        
+        Returns:
+            List of (min, max) tuples for each joint.
+            Default: (-π, π) for both joints.
+        """
+        return [(-np.pi, np.pi), (-np.pi, np.pi)]
+    
     def __repr__(self):
         return f"{self.name}(L1={self.L1}, L2={self.L2})"
 
@@ -90,9 +104,28 @@ class TwoLinkArm:
 class DualArm:
     """Holds two planar arms that can compute their FK independently"""
 
-    def __init__(self, L1=1.0, L2=0.7, separation=2.0):
-        self.left_arm: TwoLinkArm = TwoLinkArm(L1=L1, L2=L2, name="LeftArm")
-        self.right_arm: TwoLinkArm = TwoLinkArm(L1=L1, L2=L2, name="RightArm")
+    def __init__(self, L1=1.0, L2=0.7, separation=2.0, 
+                 left_arm: Optional[TwoLinkArm] = None,
+                 right_arm: Optional[TwoLinkArm] = None):
+        """
+        Initialize dual arm system.
+        
+        Args:
+            L1: Link 1 length (used if arms not provided)
+            L2: Link 2 length (used if arms not provided)
+            separation: Distance between arm bases
+            left_arm: Left arm instance (defaults to TwoLinkArm if None)
+            right_arm: Right arm instance (defaults to TwoLinkArm if None)
+        """
+        if left_arm is None:
+            self.left_arm = TwoLinkArm(L1=L1, L2=L2, name="LeftArm")
+        else:
+            self.left_arm = left_arm
+        
+        if right_arm is None:
+            self.right_arm = TwoLinkArm(L1=L1, L2=L2, name="RightArm")
+        else:
+            self.right_arm = right_arm
 
         # fixed bases, left at (-separation/2,0) right at (separation/2, 0)
         self.left_base = np.array([-separation / 2, 0.0])
@@ -106,20 +139,27 @@ class DualArm:
         return left_pos, right_pos
 
     def compute_fk_points(self, arm: TwoLinkArm, base: np.ndarray, theta1, theta2):
-        """Returns join and end effector position in base frame
+        """Returns joint and end effector position in base frame
 
         Args:
-            arm (TwoLinkArm): _description_
-            base (np.ndarray): _description_
-            theta1 (_type_): _description_
-            theta2 (_type_): _description_
+            arm: Robot arm instance (must have L1, L2 attributes for 2-link arms)
+            base: Base position
+            theta1: First joint angle
+            theta2: Second joint angle
 
         Returns:
-            _type_: _description_
+            Tuple of (base, joint, end_effector) positions
         """
-        joint = base + np.array([arm.L1 * np.cos(theta1), arm.L1 * np.sin(theta1)])
+        # For now, assume 2-link arm structure (can be extended later)
+        if hasattr(arm, 'L1') and hasattr(arm, 'L2'):
+            L1, L2 = arm.L1, arm.L2
+        else:
+            # Fallback: assume unit lengths (shouldn't happen with proper arm types)
+            L1, L2 = 1.0, 0.7
+        
+        joint = base + np.array([L1 * np.cos(theta1), L1 * np.sin(theta1)])
         end_eff = joint + np.array(
-            [arm.L2 * np.cos(theta1 + theta2), arm.L2 * np.sin(theta1 + theta2)]
+            [L2 * np.cos(theta1 + theta2), L2 * np.sin(theta1 + theta2)]
         )
         return base, joint, end_eff
 
