@@ -5,10 +5,13 @@ A Python-based simulator for dual-arm robot motion planning with workspace
 and configuration space visualization capabilities.
 """
 
-from .two_link_arm import TwoLinkArm, DualArm
+# Import from new modular structure
+from .arms.two_link_arm import TwoLinkArm
+from .arms.six_link_arm import SixLinkArm
+from .dual_arm_system import DualArm
+from .robot_arm_base import RobotArmBase
 from .workspace_generator import WorkspaceGenerator, DualArmWorkspaceGenerator
 from .cspace_generator import CSpaceGenerator, DualArmCSpaceGenerator
-from .robot_arm_base import RobotArmBase
 from .objects import Object, PointObject, CircularRegion, RectangularRegion
 from .problem_generator import Problem, ProblemGenerator
 
@@ -17,6 +20,7 @@ __author__ = "Rajan Subramanian, Kaya Celebi, Nico Bykhovsky"
 
 __all__ = [
     "TwoLinkArm",
+    "SixLinkArm",
     "DualArm", 
     "WorkspaceGenerator",
     "DualArmWorkspaceGenerator",

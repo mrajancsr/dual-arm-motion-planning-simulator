@@ -130,10 +130,10 @@ def demo_motion_planning_setup():
     
     if all([left_start_angles, right_start_angles, left_goal_angles, right_goal_angles]):
         print("✓ All IK solutions found successfully!")
-        print(f"Left start angles: {np.degrees(left_start_angles)}")
-        print(f"Right start angles: {np.degrees(right_start_angles)}")
-        print(f"Left goal angles: {np.degrees(left_goal_angles)}")
-        print(f"Right goal angles: {np.degrees(right_goal_angles)}")
+        print(f"Left start angles: {np.rad2deg(left_start_angles)[0]:.1f}°, {np.rad2deg(left_start_angles)[1]:.1f}°")
+        print(f"Right start angles: {np.rad2deg(right_start_angles)[0]:.1f}°, {np.rad2deg(right_start_angles)[1]:.1f}°")
+        print(f"Left goal angles: {np.rad2deg(left_goal_angles)[0]:.1f}°, {np.rad2deg(left_goal_angles)[1]:.1f}°")
+        print(f"Right goal angles: {np.rad2deg(right_goal_angles)[0]:.1f}°, {np.rad2deg(right_goal_angles)[1]:.1f}°")
         
         # Visualize start and goal configurations
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
