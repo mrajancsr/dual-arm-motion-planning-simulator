@@ -9,7 +9,10 @@ visualization for motion planning.
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, Optional, Dict
-from .two_link_arm import TwoLinkArm, DualArm
+try:
+    from .two_link_arm import TwoLinkArm, DualArm
+except ImportError:
+    from two_link_arm import TwoLinkArm, DualArm
 
 
 class CSpaceGenerator:
@@ -325,15 +328,15 @@ class DualArmCSpaceGenerator:
                         left_angles = (left_theta1_vals[i], left_theta2_vals[j])
                         right_angles = (right_theta1_vals[k], right_theta2_vals[l])
                         
+                        # Always append to all arrays
+                        left_theta1_sample.append(left_theta1_vals[i])
+                        left_theta2_sample.append(left_theta2_vals[j])
+                        right_theta1_sample.append(right_theta1_vals[k])
+                        right_theta2_sample.append(right_theta2_vals[l])
+
                         # Check if configuration is valid
-                        if not self.check_arm_collision(left_angles, right_angles):
-                            valid_configs.append(True)
-                            left_theta1_sample.append(left_theta1_vals[i])
-                            left_theta2_sample.append(left_theta2_vals[j])
-                            right_theta1_sample.append(right_theta1_vals[k])
-                            right_theta2_sample.append(right_theta2_vals[l])
-                        else:
-                            valid_configs.append(False)
+                        is_valid = not self.check_arm_collision(left_angles, right_angles)
+                        valid_configs.append(is_valid)
         
         return (np.array(left_theta1_sample), np.array(left_theta2_sample),
                 np.array(right_theta1_sample), np.array(right_theta2_sample),

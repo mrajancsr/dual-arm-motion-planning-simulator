@@ -8,7 +8,10 @@ of 2R planar robot arms, both individually and for dual-arm systems.
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, Optional
-from .two_link_arm import TwoLinkArm, DualArm
+try:
+    from .two_link_arm import TwoLinkArm, DualArm
+except ImportError:
+    from two_link_arm import TwoLinkArm, DualArm
 
 
 class WorkspaceGenerator:
