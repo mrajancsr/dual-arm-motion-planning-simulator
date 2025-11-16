@@ -76,6 +76,13 @@ def test_problem_generation():
     print(f"  Start config left: {problem.start_config_left}")
     print(f"  Start config right: {problem.start_config_right}")
     
+    # Verify workspace constraints
+    start_in_left = pg._is_in_left_arm_workspace(problem.object_start.get_center())
+    goal_in_right = pg._is_in_right_arm_workspace(problem.object_goal.get_center())
+    print(f"\n  Workspace constraints:")
+    print(f"    Start in left arm workspace: {start_in_left}")
+    print(f"    Goal in right arm workspace: {goal_in_right}")
+    
     # Get initial state
     initial_state = problem.get_initial_state()
     print(f"\n✓ Initial state created:")
@@ -144,9 +151,10 @@ def test_user_specified_problem():
     dual = DualArm(L1=1.0, L2=0.7, separation=2.0)
     pg = ProblemGenerator(dual)
     
-    # User specifies object positions (within collaborative workspace)
-    obj_start = PointObject(0.0, 0.8)
-    obj_goal = PointObject(0.2, 1.0)  # Adjusted to be in workspace
+    # User specifies object positions
+    # Start must be in LEFT arm workspace, goal must be in RIGHT arm workspace
+    obj_start = PointObject(-0.5, 1.0)  # Near left arm base
+    obj_goal = PointObject(0.5, 1.0)   # Near right arm base
     
     problem = pg.generate_problem(
         mode='user',

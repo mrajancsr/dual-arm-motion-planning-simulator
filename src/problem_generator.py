@@ -266,6 +266,34 @@ class ProblemGenerator:
         
         return dist_left <= max_reach and dist_right <= max_reach
     
+    def _is_in_left_arm_workspace(self, pos: np.ndarray) -> bool:
+        """Check if position is in left arm's workspace."""
+        if hasattr(self.dual_arm.left_arm, 'L1') and hasattr(self.dual_arm.left_arm, 'L2'):
+            L1 = self.dual_arm.left_arm.L1
+            L2 = self.dual_arm.left_arm.L2
+        else:
+            L1, L2 = 1.0, 0.7
+        
+        max_reach = L1 + L2
+        min_reach = abs(L1 - L2)
+        dist_left = np.linalg.norm(pos - self.dual_arm.left_base)
+        
+        return min_reach <= dist_left <= max_reach
+    
+    def _is_in_right_arm_workspace(self, pos: np.ndarray) -> bool:
+        """Check if position is in right arm's workspace."""
+        if hasattr(self.dual_arm.right_arm, 'L1') and hasattr(self.dual_arm.right_arm, 'L2'):
+            L1 = self.dual_arm.right_arm.L1
+            L2 = self.dual_arm.right_arm.L2
+        else:
+            L1, L2 = 1.0, 0.7
+        
+        max_reach = L1 + L2
+        min_reach = abs(L1 - L2)
+        dist_right = np.linalg.norm(pos - self.dual_arm.right_base)
+        
+        return min_reach <= dist_right <= max_reach
+    
     def generate_problem(self, mode: str = 'random', **kwargs) -> Problem:
         """
         Generate a motion planning problem.
@@ -288,35 +316,40 @@ class ProblemGenerator:
                                 object_start_pos: Optional[np.ndarray] = None,
                                 object_goal_pos: Optional[np.ndarray] = None) -> Problem:
         """Generate a random problem."""
-        # Sample object positions if not provided
+        # Sample object start position in LEFT arm's workspace
         if object_start_pos is None:
             attempts = 0
-            while attempts < 100:
-                x = np.random.uniform(self.workspace_bounds[0] + 0.5,
-                                     self.workspace_bounds[1] - 0.5)
-                y = np.random.uniform(0.5, self.workspace_bounds[3] - 0.5)
+            while attempts < 200:
+                # Sample around left arm base
+                x = np.random.uniform(self.dual_arm.left_base[0] - 1.5,
+                                     self.dual_arm.left_base[0] + 1.5)
+                y = np.random.uniform(0.2, 2.0)
                 pos = np.array([x, y])
-                if self._is_in_collaborative_workspace(pos):
+                if self._is_in_left_arm_workspace(pos):
                     object_start_pos = pos
                     break
                 attempts += 1
             if object_start_pos is None:
-                object_start_pos = np.array([0.0, 1.0])
+                # Fallback: position near left arm base
+                object_start_pos = self.dual_arm.left_base + np.array([0.5, 1.0])
         
+        # Sample object goal position in RIGHT arm's workspace
         if object_goal_pos is None:
             attempts = 0
-            while attempts < 100:
-                x = np.random.uniform(self.workspace_bounds[0] + 0.5,
-                                     self.workspace_bounds[1] - 0.5)
-                y = np.random.uniform(0.5, self.workspace_bounds[3] - 0.5)
+            while attempts < 200:
+                # Sample around right arm base
+                x = np.random.uniform(self.dual_arm.right_base[0] - 1.5,
+                                     self.dual_arm.right_base[0] + 1.5)
+                y = np.random.uniform(0.2, 2.0)
                 pos = np.array([x, y])
-                if self._is_in_collaborative_workspace(pos) and \
+                if self._is_in_right_arm_workspace(pos) and \
                    np.linalg.norm(pos - object_start_pos) > 0.5:
                     object_goal_pos = pos
                     break
                 attempts += 1
             if object_goal_pos is None:
-                object_goal_pos = np.array([0.5, 1.5])
+                # Fallback: position near right arm base
+                object_goal_pos = self.dual_arm.right_base + np.array([-0.5, 1.0])
         
         # Create objects
         if object_type == 'point':
@@ -362,10 +395,13 @@ class ProblemGenerator:
         obj_center_start = object_start.get_center()
         obj_center_goal = object_goal.get_center()
         
-        if not self._is_in_collaborative_workspace(obj_center_start):
-            raise ValueError("Object start position not in collaborative workspace")
-        if not self._is_in_collaborative_workspace(obj_center_goal):
-            raise ValueError("Object goal position not in collaborative workspace")
+        # Validate start is in left arm workspace
+        if not self._is_in_left_arm_workspace(obj_center_start):
+            raise ValueError("Object start position must be in left arm's workspace")
+        
+        # Validate goal is in right arm workspace
+        if not self._is_in_right_arm_workspace(obj_center_goal):
+            raise ValueError("Object goal position must be in right arm's workspace")
         
         # Generate missing configurations
         if start_config_left is None:
