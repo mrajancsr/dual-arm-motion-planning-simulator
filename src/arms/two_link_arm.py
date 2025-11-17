@@ -108,6 +108,9 @@ class TwoLinkArm(RobotArmBase):
         
         t1, t2 = float(theta_init[0]), float(theta_init[1])
         p_goal = np.array([x_goal, y_goal])
+        
+        # Get joint limits for clipping
+        joint_limits = self.get_joint_limits()
 
         for _ in range(max_iters):
             pos = self.forward_kinematics(t1, t2)
@@ -124,6 +127,10 @@ class TwoLinkArm(RobotArmBase):
 
             t1 += dtheta[0]
             t2 += dtheta[1]
+            
+            # Clip to joint limits
+            t1 = np.clip(t1, joint_limits[0][0], joint_limits[0][1])
+            t2 = np.clip(t2, joint_limits[1][0], joint_limits[1][1])
 
         return None
 

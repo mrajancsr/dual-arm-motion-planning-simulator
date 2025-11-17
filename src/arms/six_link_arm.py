@@ -127,6 +127,9 @@ class SixLinkArm(RobotArmBase):
         theta = np.array([float(t) for t in theta_init], dtype=np.float64)
         p_goal = np.array([x_goal, y_goal])
         
+        # Get joint limits for clipping
+        joint_limits = self.get_joint_limits()
+        
         for _ in range(max_iters):
             # Current position
             pos = self.forward_kinematics(*theta)
@@ -145,6 +148,10 @@ class SixLinkArm(RobotArmBase):
                 delta_theta = max_step * delta_theta / np.linalg.norm(delta_theta)
             
             theta += delta_theta
+            
+            # Clip to joint limits
+            for i, (min_limit, max_limit) in enumerate(joint_limits):
+                theta[i] = np.clip(theta[i], min_limit, max_limit)
         
         return None  # Failed to converge
 

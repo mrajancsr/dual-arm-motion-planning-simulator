@@ -1,21 +1,20 @@
-# 🦾 Interactive Dual-Arm Motion Planning Simulator for Planar Robot Arms
+# 🦾 Dual-Arm Motion Planning Simulator
 
-A Python-based simulator that models and visualizes two planar 2R robot arms performing motion planning in obstacle-rich environments.  
-This project demonstrates fundamental robotics principles including forward/inverse kinematics, configuration space visualization, and sampling-based motion planning (RRT).
+A Python-based simulator for dual-arm robot motion planning using RRT* in configuration space. Supports 2-link and 6-link planar robot arms with collision detection and path planning.
 
 ---
 
 ## 🧠 Project Overview
 
-This simulator is developed for the **Computational Robotics** course (Fall 2025).  
-It provides an interactive environment for understanding how dual-arm manipulators compute and execute collision-free trajectories in a shared workspace.
+This simulator is developed for the **Computational Robotics** course (Fall 2025). It demonstrates fundamental robotics principles including forward/inverse kinematics, configuration space visualization, and sampling-based motion planning (RRT*).
 
 ### ✨ Key Features
-- Forward and Inverse Kinematics for 2-link planar arms  
+- Forward and Inverse Kinematics for 2-link and 6-link planar arms  
 - Dual-arm configuration and independent motion control  
 - Workspace and C-space (configuration space) visualization  
-- Sampling-based motion planning (RRT)  
-- Optional trajectory smoothing and animation  
+- RRT* (Rapidly-exploring Random Tree Star) motion planning algorithm  
+- Collision detection and path validation  
+- Joint limit enforcement in IK solver
 
 ---
 
@@ -33,144 +32,253 @@ It provides an interactive environment for understanding how dual-arm manipulato
 ```
 src/
 ├── __init__.py                 # Package initialization
-├── two_link_arm.py            # Core robot arm classes
+├── arms/
+│   ├── two_link_arm.py        # 2-link arm implementation
+│   └── six_link_arm.py        # 6-link arm implementation
+├── dual_arm_system.py         # Dual-arm system coordination & collision checking
+├── robot_arm_base.py          # Base class for robot arms
+├── rrt_star.py                # RRT* motion planning algorithm (C-space planning)
+├── motion_planner.py          # High-level planner (workspace → C-space → RRT*)
+├── simple_problem.py          # Simple problem generator
 ├── workspace_generator.py     # Workspace generation and visualization
-└── cspace_generator.py        # Configuration space generation and visualization
+├── cspace_generator.py        # Configuration space generation and visualization
+├── problem_generator.py       # Legacy problem generator (object manipulation)
+└── objects.py                 # Object definitions
 ```
+
+### Key Files
+- **`rrt_star.py`**: Core RRT* implementation - plans in C-space using `DualArm.is_valid_configuration()`
+- **`motion_planner.py`**: High-level interface - converts workspace goals to C-space and plans
+- **`dual_arm_system.py`**: Manages two arms and provides collision checking
 
 ---
 
-## 🔧 Module Documentation
+## 🏗️ Architecture and End-to-End Process
 
-### Workspace Generator Module (`workspace_generator.py`)
+### Data Flow
 
-#### Purpose
-Generates and visualizes the workspace of 2R planar robot arms, both individually and for dual-arm systems.
-
-#### Classes
-
-**`WorkspaceGenerator`**
-- **Purpose**: Generates workspace for a single 2R arm
-- **Key Methods**:
-  - `generate_workspace()`: Samples joint angles to generate workspace points
-  - `generate_workspace_boundary()`: Computes workspace boundary
-  - `plot_workspace()`: Visualizes workspace with boundary and reach limits
-
-**`DualArmWorkspaceGenerator`**
-- **Purpose**: Generates workspace for dual-arm systems
-- **Key Methods**:
-  - `generate_dual_workspace()`: Generates workspace for both arms
-  - `plot_dual_workspace()`: Visualizes both arm workspaces and collaborative region
-
-#### Features
-- Workspace boundary computation using joint limits
-- Reachability analysis with inner/outer radius limits
-- Collaborative workspace identification
-- High-quality matplotlib visualizations
-- Configurable resolution for sampling
-
-### Configuration Space Generator Module (`cspace_generator.py`)
-
-#### Purpose
-Generates and visualizes the configuration space (C-space) of 2R planar robot arms, including collision detection and validity checking.
-
-#### Classes
-
-**`CSpaceGenerator`**
-- **Purpose**: Generates C-space for a single 2R arm
-- **Key Methods**:
-  - `generate_cspace_grid()`: Creates configuration space grid
-  - `check_workspace_limits()`: Validates reachability
-  - `check_self_collision()`: Checks for self-collisions
-  - `plot_cspace()`: Visualizes valid/invalid configurations
-  - `plot_cspace_heatmap()`: Shows C-space as heatmap
-
-**`DualArmCSpaceGenerator`**
-- **Purpose**: Generates C-space for dual-arm systems
-- **Key Methods**:
-  - `check_arm_collision()`: Detects collisions between arms
-  - `generate_dual_cspace()`: Generates 4D C-space (simplified)
-  - `plot_dual_cspace_2d()`: Shows 2D projections of dual C-space
-
-#### Features
-- Joint limit enforcement
-- Workspace reachability checking
-- Inter-arm collision detection
-- 2D and heatmap visualizations
-- Configurable joint angle ranges
-
----
-
-## 💻 Usage Examples
-
-### Basic Workspace Generation
-```python
-from src.workspace_generator import WorkspaceGenerator
-from src.two_link_arm import TwoLinkArm
-
-# Create arm and workspace generator
-arm = TwoLinkArm(L1=1.0, L2=0.7)
-ws_gen = WorkspaceGenerator(arm, resolution=100)
-
-# Generate and plot workspace
-fig = ws_gen.plot_workspace(show_boundary=True, show_points=True)
+```
+Workspace Goals (x₁, y₁), (x₂, y₂)
+    ↓ [IK Conversion - MotionPlanner]
+C-space Configs [θ₁, θ₂, θ₃, θ₄] → [θ₅, θ₆, θ₇, θ₈]
+    ↓ [RRT* Planning]
+Path: List of configs [[θ₁, θ₂, θ₃, θ₄], ..., [θ₅, θ₆, θ₇, θ₈]]
+    ↓ [Execution]
+Visualization in Workspace
 ```
 
-### Dual-Arm Workspace
-```python
-from src.workspace_generator import DualArmWorkspaceGenerator
-from src.two_link_arm import DualArm
+### Component Responsibilities
 
-# Create dual arm system
-dual_arm = DualArm(L1=1.0, L2=0.7, separation=2.0)
-dual_ws_gen = DualArmWorkspaceGenerator(dual_arm, resolution=100)
+**`DualArm` System**
+- Manages two robot arms
+- Provides `is_valid_configuration(config)` for collision checking
+- Checks individual arm validity (joint limits, workspace) and inter-arm collisions
+- Handles forward kinematics (C-space → workspace)
 
-# Plot dual workspace
-fig = dual_ws_gen.plot_dual_workspace(show_boundary=True, show_points=True)
-```
+**`RRTStar` Planner**
+- Plans paths in C-space
+- Takes start/goal configs as numpy arrays
+- Format: `[θ1_left, θ2_left, θ1_right, θ2_right]` for 2-link arms
+- Format: `[θ1_left...θ6_left, θ1_right...θ6_right]` for 6-link arms
+- Returns list of configs forming path
+- Uses `DualArm.is_valid_configuration()` for validation
 
-### Configuration Space Analysis
-```python
-from src.cspace_generator import CSpaceGenerator
+**`MotionPlanner`**
+- High-level interface that bridges workspace goals with RRT*
+- Converts workspace positions to C-space using IK
+- Validates IK solutions before planning
+- Handles multiple IK attempts with different initial guesses
 
-# Create C-space generator
-cspace_gen = CSpaceGenerator(arm, resolution=100)
-cspace_gen.set_joint_limits((-np.pi, np.pi), (-np.pi/2, np.pi/2))
+### Key Design Decisions
 
-# Plot C-space
-fig = cspace_gen.plot_cspace(show_invalid=True)
-```
-
----
-
-## 🔗 Integration with Motion Planning
-
-These modules provide the foundation for motion planning algorithms:
-
-1. **Workspace Analysis**: Identifies reachable regions for path planning
-2. **C-space Visualization**: Shows valid configurations for sampling-based planners
-3. **Collision Detection**: Enables obstacle avoidance in motion planning
-4. **Dual-Arm Coordination**: Supports collaborative manipulation planning
+1. **C-space Planning**: RRT* works in configuration space (joint angles), not workspace
+2. **Separation of Concerns**: 
+   - IK handles workspace ↔ C-space conversion
+   - RRT* handles path planning in C-space
+   - DualArm handles collision checking
+3. **Generic Design**: Works with any arm type (2-link, 6-link, etc.)
+4. **Joint Limit Enforcement**: IK solver clips joint angles to limits during iteration
 
 ---
 
 ## ⚙️ Setup Instructions
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/<your-username>/dual-arm-motion-planning-simulator.git
-cd dual-arm-motion-planning-simulator
-```
-
-### 2. Install dependencies
+### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the demo
+### 2. Run End-to-End Tests (Recommended)
 ```bash
-python demo.py
+# Test complete workflow: workspace goals → IK → RRT* → visualization
+python test_end_to_end.py
 ```
+
+This demonstrates the **complete workflow**:
+1. Define workspace goals (x, y positions)
+2. Convert to C-space using Inverse Kinematics
+3. Plan collision-free path using RRT*
+4. Validate and visualize path
+
+### 3. Run Component Tests
+```bash
+# Test RRT* implementation directly
+python test_rrt_star.py
+
+# Test dual-arm system components
+python test_six_link_arm.py
+```
+
+---
+
+## 💻 Usage Examples
+
+### High-Level Interface (Recommended)
+
+```python
+from src import DualArm, MotionPlanner, SimpleProblemGenerator
+import numpy as np
+
+# Create dual-arm system
+dual_arm = DualArm(L1=1.0, L2=0.7, separation=2.0)
+
+# Option 1: Generate random problem
+prob_gen = SimpleProblemGenerator(dual_arm)
+problem = prob_gen.generate_random_problem()
+
+# Option 2: Create custom problem
+problem = prob_gen.create_problem(
+    left_start=np.array([-0.8, 0.5]),
+    left_goal=np.array([-0.3, 1.2]),
+    right_start=np.array([1.2, 0.5]),
+    right_goal=np.array([1.7, 1.2])
+)
+
+# Create planner and plan
+planner = MotionPlanner(dual_arm, max_iterations=3000, step_size=0.15)
+path = planner.plan_from_workspace_goals(
+    problem.left_start_pos,
+    problem.left_goal_pos,
+    problem.right_start_pos,
+    problem.right_goal_pos
+)
+
+if path:
+    print(f"Path found! Length: {len(path)} configurations")
+else:
+    print("Planning failed")
+```
+
+### Low-Level: Direct C-Space Planning
+
+```python
+from src import DualArm, RRTStar
+import numpy as np
+
+dual_arm = DualArm(L1=1.0, L2=0.7, separation=2.0)
+
+# Define configs directly: [θ1_left, θ2_left, θ1_right, θ2_right]
+start_config = np.array([0.5, 0.3, -0.2, 0.4])
+goal_config = np.array([1.0, -0.5, 0.8, -0.3])
+
+# Plan directly in C-space
+planner = RRTStar(dual_arm, max_iterations=3000, step_size=0.15)
+path = planner.plan(start_config, goal_config)
+```
+
+### With 6-Link Arms
+
+```python
+from src import DualArm, SixLinkArm, MotionPlanner
+import numpy as np
+
+# Create 6-link arms
+left_arm = SixLinkArm(L1=0.5, L2=0.4, L3=0.3, L4=0.25, L5=0.2, L6=0.15)
+right_arm = SixLinkArm(L1=0.5, L2=0.4, L3=0.3, L4=0.25, L5=0.2, L6=0.15)
+dual_arm = DualArm(left_arm=left_arm, right_arm=right_arm, separation=2.0)
+
+# Use high-level interface (handles IK conversion)
+planner = MotionPlanner(dual_arm, max_iterations=8000, step_size=0.08, goal_threshold=0.2)
+prob_gen = SimpleProblemGenerator(dual_arm)
+problem = prob_gen.generate_random_problem()
+
+path = planner.plan_from_workspace_goals(
+    problem.left_start_pos, problem.left_goal_pos,
+    problem.right_start_pos, problem.right_goal_pos
+)
+```
+
+### Workspace Visualization
+
+```python
+from src import DualArm, WorkspaceGenerator, DualArmWorkspaceGenerator
+
+# Single arm workspace
+arm = TwoLinkArm(L1=1.0, L2=0.7)
+ws_gen = WorkspaceGenerator(arm, resolution=100)
+fig = ws_gen.plot_workspace(show_boundary=True, show_points=True)
+
+# Dual arm workspace
+dual_arm = DualArm(L1=1.0, L2=0.7, separation=2.0)
+dual_ws_gen = DualArmWorkspaceGenerator(dual_arm, resolution=100)
+fig = dual_ws_gen.plot_dual_workspace(show_boundary=True, show_points=True)
+```
+
+---
+
+## 🔧 Implementation Details
+
+### RRT* Algorithm
+
+The RRT* implementation:
+- Samples random configurations in C-space
+- Builds a tree from start to goal
+- Uses `DualArm.is_valid_configuration()` to check:
+  - Joint limits (individual arms)
+  - Workspace reachability
+  - Inter-arm collisions
+- Optimizes path via rewiring
+- Returns collision-free path as list of configurations
+
+### IK Solver Improvements
+
+The IK solver (`ik_iterative`) now:
+- **Enforces joint limits** during iteration by clipping angles to `[-π, π]`
+- Tries multiple initial guesses for better convergence
+- Validates solutions before returning them
+- Works with both 2-link and 6-link arms
+
+### Configuration Validation
+
+`DualArm.is_valid_configuration(config)` checks:
+1. **Joint limits**: Each joint angle within `[-π, π]`
+2. **Workspace reachability**: End-effector within reachable region
+3. **Inter-arm collisions**: Arm segments don't intersect
+
+---
+
+## 🐛 Troubleshooting
+
+### Planning Fails
+- **Increase `max_iterations`**: Try 5000-10000 for 2-link, 8000-15000 for 6-link
+- **Increase `goal_threshold`**: Try 0.2-0.3 (especially for 6-link arms)
+- **Check IK solutions**: Ensure workspace goals are reachable
+- **Verify configurations**: Use `dual_arm.is_valid_configuration()` before planning
+
+### IK Conversion Fails
+- **Workspace position unreachable**: Check if position is within arm's workspace
+- **Multiple attempts**: `MotionPlanner` tries 20 different initial guesses automatically
+- **6-link arms**: More challenging - may need more attempts or better initial guesses
+
+### Path Has Collisions
+- **Decrease `step_size`**: For finer path checking (try 0.05-0.1)
+- **Increase validation checks**: More intermediate points in path validation
+- **Verify collision detection**: Test `is_valid_configuration()` directly
+
+### Slow Planning
+- **Reduce `max_iterations`**: Faster but less optimal planning
+- **Increase `step_size`**: Explore faster (but may miss narrow passages)
+- **Reduce `rewire_radius`**: Check fewer neighbors during optimization
 
 ---
 
@@ -182,13 +290,35 @@ python demo.py
 
 ---
 
+## 🧪 Test Files
+
+- **`test_end_to_end.py`**: Complete workflow test (workspace → IK → RRT* → visualization)
+- **`test_rrt_star.py`**: RRT* component tests
+- **`test_six_link_arm.py`**: 6-link arm integration tests
+
+---
+
+## 📝 Recent Changes
+
+### IK Solver Fix
+- **Fixed**: IK solver now clips joint angles to limits during iteration
+- **Impact**: IK solutions now respect joint limits, improving success rate
+- **Files**: `src/arms/two_link_arm.py`, `src/arms/six_link_arm.py`
+
+### Code Cleanup
+- Removed old/unused test files (`test_simulator.py`, `test_motion_path.py`, `test_path_animation.py`)
+- Consolidated documentation into single README
+- Improved problem generation with better validation
+
+---
+
 ## 🚀 Future Enhancements
 
-- 3D workspace visualization
-- Advanced collision detection algorithms
-- Real-time C-space updates
-- Integration with RRT/PRM planners
-- Trajectory optimization visualization
+- Trajectory smoothing/post-processing
+- Visualization of RRT* planning tree
+- Support for static obstacles in workspace
+- Better workspace reachability analysis for 6-link arms
+- Performance optimizations (KD-tree for nearest neighbor search)
 
 ---
 
