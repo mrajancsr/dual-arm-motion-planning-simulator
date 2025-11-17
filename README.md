@@ -129,6 +129,25 @@ python test_rrt_star.py
 python test_six_link_arm.py
 ```
 
+### 4. Run Legacy Demo (Optional)
+```bash
+# Old demo showing workspace/C-space visualization
+python demo.py
+```
+
+## Main Runner File
+
+**`test_end_to_end.py`** is the main runner file that demonstrates the complete motion planning workflow. It:
+- Generates planning problems
+- Converts workspace goals to C-space using IK
+- Plans paths using RRT*
+- Visualizes results
+
+Run it with:
+```bash
+python test_end_to_end.py
+```
+
 ---
 
 ## 💻 Usage Examples

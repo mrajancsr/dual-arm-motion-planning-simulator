@@ -85,9 +85,9 @@ class DualArm:
         """
         Returns joint and end-effector positions in base frame.
         
-        This method works generically for any arm type by using forward_kinematics
-        and computing intermediate points. For 2-link arms, it computes the
-        elbow joint position. For other arm types, it may need to be extended.
+        This method works generically for any arm type by computing all intermediate
+        joint positions. For 2-link arms, it computes the elbow joint. For 6-link
+        arms, it computes all 6 intermediate joint positions.
         
         Args:
             arm: Robot arm instance (must inherit from RobotArmBase)
@@ -97,7 +97,7 @@ class DualArm:
         Returns:
             Tuple of (base, intermediate_points..., end_effector) positions
         """
-        # For 2-link arms, we can compute the elbow joint
+        # For 2-link arms, compute elbow joint
         if hasattr(arm, 'L1') and hasattr(arm, 'L2') and len(joint_angles) == 2:
             L1, L2 = arm.L1, arm.L2
             theta1, theta2 = joint_angles[0], joint_angles[1]
@@ -107,6 +107,25 @@ class DualArm:
                 [L2 * np.cos(theta1 + theta2), L2 * np.sin(theta1 + theta2)]
             )
             return base, joint, end_eff
+        
+        # For 6-link arms, compute all intermediate joints
+        elif hasattr(arm, 'link_lengths') and len(joint_angles) == 6:
+            points = [base.copy()]
+            cumulative_angle = 0.0
+            current_pos = base.copy()
+            
+            for i, (length, angle) in enumerate(zip(arm.link_lengths, joint_angles)):
+                cumulative_angle += float(angle)
+                # Compute next joint position
+                next_pos = current_pos + np.array([
+                    length * np.cos(cumulative_angle),
+                    length * np.sin(cumulative_angle)
+                ])
+                points.append(next_pos.copy())
+                current_pos = next_pos
+            
+            return tuple(points)
+        
         else:
             # Generic fallback: just return base and end-effector
             end_eff_pos = arm.forward_kinematics(*joint_angles)

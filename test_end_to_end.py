@@ -205,16 +205,19 @@ def test_6link_end_to_end():
             problem = prob_gen.generate_random_problem()
     
     if path is None:
-        print("⚠️  Planning failed (6-link planning in 12D space is challenging)")
-        print("   This is expected - 6-link arms require more iterations or better IK solutions")
-        # Don't fail the test - 6-link planning is legitimately harder
-        return True  # Mark as passed since IK conversion works
+        print("❌ Planning failed")
+        print("   Note: 6-link planning in 12D space is challenging")
+        print("   Try increasing max_iterations or adjusting parameters")
+        return False
     
     print(f"✓ Path found with {len(path)} configurations")
     
     # Validate
     valid_count = sum(1 for config in path if dual_arm.is_valid_configuration(config))
     print(f"✓ Valid configurations: {valid_count}/{len(path)}")
+    
+    # Visualize
+    visualize_path_execution(dual_arm, path, problem)
     
     return True
 
