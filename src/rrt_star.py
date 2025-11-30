@@ -30,7 +30,7 @@ class RRTStar:
     
     def __init__(self, dual_arm: DualArm, max_iterations: int = 5000,
                  step_size: float = 0.1, goal_threshold: float = 0.1,
-                 rewire_radius: float = 0.5):
+                 rewire_radius: float = 0.5, verbose: bool = False):
         """
         Initialize RRT* planner.
         
@@ -40,25 +40,29 @@ class RRTStar:
             step_size: Maximum step size in configuration space (radians)
             goal_threshold: Distance threshold to consider goal reached
             rewire_radius: Radius for RRT* rewiring optimization
+            verbose: Whether to print progress updates
         """
         self.dual_arm = dual_arm
         self.max_iterations = max_iterations
         self.step_size = step_size
         self.goal_threshold = goal_threshold
         self.rewire_radius = rewire_radius
+        self.verbose = verbose
         
         # Get joint limits for sampling
         self.left_limits = dual_arm.left_arm.get_joint_limits()
         self.right_limits = dual_arm.right_arm.get_joint_limits()
         self.config_dim = dual_arm.left_arm.get_num_joints() + dual_arm.right_arm.get_num_joints()
     
-    def plan(self, start_config: np.ndarray, goal_config: np.ndarray) -> Optional[List[np.ndarray]]:
+    def plan(self, start_config: np.ndarray, goal_config: np.ndarray, 
+             progress_callback=None) -> Optional[List[np.ndarray]]:
         """
         Plan a path from start to goal configuration.
         
         Args:
             start_config: Start configuration as numpy array
             goal_config: Goal configuration as numpy array
+            progress_callback: Optional callback function(tree, iteration) called every 1000 iterations
             
         Returns:
             List of configurations forming the path, or None if planning fails
@@ -77,10 +81,22 @@ class RRTStar:
         }]
         
         goal_node_idx = None
+        best_goal_cost = float('inf')
         
         for iteration in range(self.max_iterations):
+            # Print progress every 1000 iterations
+            if self.verbose and (iteration + 1) % 1000 == 0:
+                goal_status = f", goal found" if goal_node_idx is not None else ""
+                print(f"  RRT* Progress: {iteration + 1}/{self.max_iterations} iterations "
+                      f"({100 * (iteration + 1) / self.max_iterations:.1f}%) - "
+                      f"Tree size: {len(tree)} nodes{goal_status}")
+            
+            # Call progress callback every 1000 iterations
+            if progress_callback is not None and (iteration + 1) % 1000 == 0:
+                progress_callback(tree, iteration + 1)
+            
             # Sample random configuration (with goal bias)
-            if np.random.random() < 0.1:  # 10% chance to sample goal
+            if np.random.random() < 0.2:  # 20% chance to sample goal (increased for faster convergence)
                 sample_config = goal_config.copy()
             else:
                 sample_config = self.sample_random_config()
@@ -125,13 +141,20 @@ class RRTStar:
             # Rewire neighbors
             self.rewire(tree, new_node_idx, neighbors)
             
-            # Check if goal is reached
+            # Check if goal is reached (but don't break - keep refining)
             if self.distance(new_config, goal_config) < self.goal_threshold:
-                goal_node_idx = new_node_idx
-                break
+                # Update best goal if this path is better
+                if best_cost < best_goal_cost:
+                    goal_node_idx = new_node_idx
+                    best_goal_cost = best_cost
+                    if self.verbose:
+                        print(f"  ✓ Goal reached at iteration {iteration + 1}/{self.max_iterations} "
+                              f"(cost: {best_cost:.3f}) - continuing to refine...")
         
         # Reconstruct path if goal reached
         if goal_node_idx is not None:
+            if self.verbose:
+                print(f"  ✓ Final best path found with cost: {best_goal_cost:.3f}")
             path = self.reconstruct_path(tree, goal_node_idx)
             # Add goal config to path if reachable from last node
             last_node_config = path[-1]
@@ -139,6 +162,8 @@ class RRTStar:
                 path.append(goal_config)
             return path
         
+        if self.verbose:
+            print(f"  ❌ No path found after {self.max_iterations} iterations")
         return None
     
     def sample_random_config(self) -> np.ndarray:
@@ -214,14 +239,14 @@ class RRTStar:
         return new_config
     
     def is_path_valid(self, config1: np.ndarray, config2: np.ndarray, 
-                     num_checks: int = 10) -> bool:
+                     num_checks: int = 5) -> bool:
         """
         Check if path segment between two configurations is collision-free.
         
         Args:
             config1: Start configuration
             config2: End configuration
-            num_checks: Number of intermediate points to check
+            num_checks: Number of intermediate points to check (reduced for speed)
             
         Returns:
             True if path is valid, False otherwise
@@ -232,7 +257,7 @@ class RRTStar:
         if not self.dual_arm.is_valid_configuration(config2):
             return False
         
-        # Check intermediate points
+        # Check intermediate points (reduced from 10 to 5 for speed)
         for i in range(1, num_checks):
             alpha = i / num_checks
             intermediate = config1 + alpha * (config2 - config1)

@@ -6,7 +6,7 @@ that inherit from RobotArmBase. The system manages base positions, coordinate
 transformations, and inter-arm operations.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Union
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -24,6 +24,7 @@ class DualArm:
     def __init__(self, L1=1.0, L2=0.7, separation=2.0, 
                  left_arm: Optional[RobotArmBase] = None,
                  right_arm: Optional[RobotArmBase] = None,
+                 obstacles: Optional[List[Dict]] = None,
                  **arm_params):
         """
         Initialize dual arm system.
@@ -34,6 +35,10 @@ class DualArm:
             separation: Distance between arm bases
             left_arm: Left arm instance (defaults to TwoLinkArm if None)
             right_arm: Right arm instance (defaults to TwoLinkArm if None)
+            obstacles: Optional list of obstacle dictionaries. Each obstacle dict can be:
+                - Circle: {'type': 'circle', 'center': [x, y], 'radius': r}
+                - Rectangle: {'type': 'rectangle', 'center': [x, y], 'width': w, 'height': h, 'rotation': theta (rad, optional)}
+                - Polygon: {'type': 'polygon', 'vertices': [[x1, y1], [x2, y2], ...]}
             **arm_params: Additional parameters for default arm creation
         """
         # Default to TwoLinkArm if no arms provided (backward compatibility)
@@ -59,6 +64,9 @@ class DualArm:
         # Fixed bases, left at (-separation/2, 0) right at (separation/2, 0)
         self.left_base = np.array([-separation / 2, 0.0])
         self.right_base = np.array([separation / 2, 0.0])
+        
+        # Store obstacles
+        self.obstacles = obstacles if obstacles is not None else []
         
         # State management for current arm configurations
         self._current_left_config = None
@@ -131,6 +139,35 @@ class DualArm:
             end_eff_pos = arm.forward_kinematics(*joint_angles)
             end_eff = base + end_eff_pos
             return base, end_eff
+    
+    def _get_all_link_segments(self, config: np.ndarray) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Get all link segments for both arms in a configuration.
+        
+        Args:
+            config: Full configuration array [θ1_left, θ2_left, ..., θ1_right, ...]
+            
+        Returns:
+            List of (start_point, end_point) tuples for all link segments
+        """
+        left_config, right_config = self._split_configuration(config)
+        
+        # Get all joint positions for both arms
+        left_points = self.compute_fk_points(self.left_arm, self.left_base, *left_config)
+        right_points = self.compute_fk_points(self.right_arm, self.right_base, *right_config)
+        
+        # Convert to list of segments
+        segments = []
+        
+        # Left arm segments
+        for i in range(len(left_points) - 1):
+            segments.append((left_points[i], left_points[i + 1]))
+        
+        # Right arm segments
+        for i in range(len(right_points) - 1):
+            segments.append((right_points[i], right_points[i + 1]))
+        
+        return segments
 
     def get_configuration(self) -> Tuple[Tuple, Tuple]:
         """
@@ -190,6 +227,7 @@ class DualArm:
         Checks:
         - Individual arm validity (joint limits, workspace, self-collision)
         - Inter-arm collision detection
+        - Obstacle collision detection (if obstacles are defined)
         
         Args:
             config: Full configuration array [θ1_left, θ2_left, θ1_right, θ2_right, ...]
@@ -206,32 +244,27 @@ class DualArm:
         if not self.right_arm.is_valid_configuration(*right_config):
             return False
         
-        # Check inter-arm collision
-        # Get arm segment points for collision checking
-        left_points = self.compute_fk_points(
-            self.left_arm, self.left_base, *left_config
-        )
-        right_points = self.compute_fk_points(
-            self.right_arm, self.right_base, *right_config
-        )
+        # Get all link segments for collision checking
+        segments = self._get_all_link_segments(config)
         
-        # For 2-link arms, we have (base, joint, end_effector)
-        # Check if any segments intersect
-        if len(left_points) >= 3 and len(right_points) >= 3:
-            # Check all segment pairs
-            left_segments = [
-                (left_points[0], left_points[1]),  # base to joint
-                (left_points[1], left_points[2])   # joint to end-effector
-            ]
-            right_segments = [
-                (right_points[0], right_points[1]),
-                (right_points[1], right_points[2])
-            ]
-            
-            for seg_left in left_segments:
-                for seg_right in right_segments:
-                    if self._line_segments_intersect(seg_left, seg_right):
-                        return False
+        # Check inter-arm collision
+        n_left_segments = len(self.compute_fk_points(self.left_arm, self.left_base, *left_config)) - 1
+        n_right_segments = len(self.compute_fk_points(self.right_arm, self.right_base, *right_config)) - 1
+        
+        left_segments = segments[:n_left_segments]
+        right_segments = segments[n_left_segments:]
+        
+        # Check if any left and right segments intersect
+        for seg_left in left_segments:
+            for seg_right in right_segments:
+                if self._line_segments_intersect(seg_left, seg_right):
+                    return False
+        
+        # Check obstacle collisions if obstacles are defined
+        if self.obstacles:
+            for segment in segments:
+                if self._segment_intersects_obstacles(segment):
+                    return False
         
         return True
 
@@ -264,6 +297,196 @@ class DualArm:
         t2 = ((p3[0] - p1[0]) * d1[1] - (p3[1] - p1[1]) * d1[0]) / denom
         
         return 0 <= t1 <= 1 and 0 <= t2 <= 1
+    
+    def _segment_intersects_obstacles(self, segment: Tuple[np.ndarray, np.ndarray]) -> bool:
+        """
+        Check if a line segment intersects any obstacle.
+        
+        Args:
+            segment: Line segment as (start, end)
+            
+        Returns:
+            True if segment intersects any obstacle, False otherwise
+        """
+        for obstacle in self.obstacles:
+            if self._segment_intersects_obstacle(segment, obstacle):
+                return True
+        return False
+    
+    def _segment_intersects_obstacle(self, segment: Tuple[np.ndarray, np.ndarray], 
+                                     obstacle: Dict) -> bool:
+        """
+        Check if a line segment intersects a specific obstacle.
+        
+        Args:
+            segment: Line segment as (start, end)
+            obstacle: Obstacle dictionary with 'type' key
+            
+        Returns:
+            True if segment intersects obstacle, False otherwise
+        """
+        obs_type = obstacle.get('type', '').lower()
+        
+        if obs_type == 'circle':
+            return self._segment_intersects_circle(segment, obstacle)
+        elif obs_type == 'rectangle':
+            return self._segment_intersects_rectangle(segment, obstacle)
+        elif obs_type == 'polygon':
+            return self._segment_intersects_polygon(segment, obstacle)
+        else:
+            # Unknown obstacle type, skip it
+            return False
+    
+    def _segment_intersects_circle(self, segment: Tuple[np.ndarray, np.ndarray], 
+                                   obstacle: Dict) -> bool:
+        """
+        Check if a line segment intersects a circle obstacle.
+        
+        Args:
+            segment: Line segment as (start, end)
+            obstacle: Circle obstacle dict with 'center' and 'radius'
+            
+        Returns:
+            True if segment intersects circle, False otherwise
+        """
+        p1, p2 = segment
+        center = np.array(obstacle['center'])
+        radius = obstacle['radius']
+        
+        # Vector from p1 to p2
+        d = p2 - p1
+        # Vector from p1 to circle center
+        f = p1 - center
+        
+        # Quadratic equation: a*t^2 + b*t + c = 0
+        a = np.dot(d, d)
+        b = 2 * np.dot(f, d)
+        c = np.dot(f, f) - radius * radius
+        
+        # Handle degenerate case (zero-length segment)
+        if a < 1e-10:
+            # Segment is a point, check if point is inside circle
+            return np.linalg.norm(p1 - center) <= radius
+        
+        discriminant = b * b - 4 * a * c
+        
+        if discriminant < 0:
+            return False  # No intersection
+        
+        # Check if intersection point is on the segment
+        sqrt_disc = np.sqrt(discriminant)
+        t1 = (-b - sqrt_disc) / (2 * a)
+        t2 = (-b + sqrt_disc) / (2 * a)
+        
+        # Check if any solution is in [0, 1]
+        return (0 <= t1 <= 1) or (0 <= t2 <= 1)
+    
+    def _segment_intersects_rectangle(self, segment: Tuple[np.ndarray, np.ndarray], 
+                                       obstacle: Dict) -> bool:
+        """
+        Check if a line segment intersects a rectangle obstacle.
+        
+        Args:
+            segment: Line segment as (start, end)
+            obstacle: Rectangle obstacle dict with 'center', 'width', 'height', optional 'rotation'
+            
+        Returns:
+            True if segment intersects rectangle, False otherwise
+        """
+        center = np.array(obstacle['center'])
+        width = obstacle['width']
+        height = obstacle['height']
+        rotation = obstacle.get('rotation', 0.0)
+        
+        # Get rectangle vertices (unrotated, centered at origin)
+        half_w = width / 2
+        half_h = height / 2
+        vertices = np.array([
+            [-half_w, -half_h],
+            [half_w, -half_h],
+            [half_w, half_h],
+            [-half_w, half_h]
+        ])
+        
+        # Rotate vertices
+        if rotation != 0:
+            cos_r = np.cos(rotation)
+            sin_r = np.sin(rotation)
+            rotation_matrix = np.array([[cos_r, -sin_r], [sin_r, cos_r]])
+            vertices = vertices @ rotation_matrix.T
+        
+        # Translate to center
+        vertices = vertices + center
+        
+        # Convert rectangle to polygon and check intersection
+        polygon_obstacle = {'type': 'polygon', 'vertices': vertices.tolist()}
+        return self._segment_intersects_polygon(segment, polygon_obstacle)
+    
+    def _segment_intersects_polygon(self, segment: Tuple[np.ndarray, np.ndarray], 
+                                     obstacle: Dict) -> bool:
+        """
+        Check if a line segment intersects a polygon obstacle.
+        
+        Uses ray-casting algorithm: check if segment intersects any polygon edge.
+        
+        Args:
+            segment: Line segment as (start, end)
+            obstacle: Polygon obstacle dict with 'vertices' list
+            
+        Returns:
+            True if segment intersects polygon, False otherwise
+        """
+        vertices = np.array(obstacle['vertices'])
+        
+        # Check if segment intersects any polygon edge
+        n_vertices = len(vertices)
+        for i in range(n_vertices):
+            edge_start = vertices[i]
+            edge_end = vertices[(i + 1) % n_vertices]
+            edge_segment = (edge_start, edge_end)
+            
+            if self._line_segments_intersect(segment, edge_segment):
+                return True
+        
+        # Also check if segment endpoints are inside polygon
+        p1, p2 = segment
+        if self._point_in_polygon(p1, vertices) or self._point_in_polygon(p2, vertices):
+            return True
+        
+        return False
+    
+    def _point_in_polygon(self, point: np.ndarray, vertices: np.ndarray) -> bool:
+        """
+        Check if a point is inside a polygon using ray-casting algorithm.
+        
+        Args:
+            point: Point to check [x, y]
+            vertices: Array of polygon vertices
+            
+        Returns:
+            True if point is inside polygon, False otherwise
+        """
+        x, y = point[0], point[1]
+        n = len(vertices)
+        inside = False
+        
+        p1x, p1y = vertices[0]
+        for i in range(1, n + 1):
+            p2x, p2y = vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                            if p1x == p2x or x <= xinters:
+                                inside = not inside
+                        else:
+                            # Horizontal edge - point is on edge if x is between endpoints
+                            if min(p1x, p2x) <= x <= max(p1x, p2x):
+                                inside = not inside
+            p1x, p1y = p2x, p2y
+        
+        return inside
 
     def get_end_effector_positions(self) -> Tuple[np.ndarray, np.ndarray]:
         """
