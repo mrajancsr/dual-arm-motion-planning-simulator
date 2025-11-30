@@ -7,6 +7,7 @@ and configuration space visualization capabilities.
 
 # Import from new modular structure
 from .arms.two_link_arm import TwoLinkArm
+from .arms.three_link_arm import ThreeLinkArm
 from .arms.six_link_arm import SixLinkArm
 from .dual_arm_system import DualArm
 from .robot_arm_base import RobotArmBase
@@ -24,6 +25,7 @@ __author__ = "Rajan Subramanian, Kaya Celebi, Nico Bykhovsky"
 
 __all__ = [
     "TwoLinkArm",
+    "ThreeLinkArm",
     "SixLinkArm",
     "DualArm", 
     "WorkspaceGenerator",
