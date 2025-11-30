@@ -17,6 +17,7 @@ from .problem_generator import Problem, ProblemGenerator
 from .rrt_star import RRTStar
 from .motion_planner import MotionPlanner
 from .simple_problem import PlanningProblem, SimpleProblemGenerator
+from .parallel_planner import ParallelRRTStar
 
 __version__ = "0.1.0"
 __author__ = "Rajan Subramanian, Kaya Celebi, Nico Bykhovsky"
@@ -39,5 +40,6 @@ __all__ = [
     "RRTStar",
     "MotionPlanner",
     "PlanningProblem",
-    "SimpleProblemGenerator"
+    "SimpleProblemGenerator",
+    "ParallelRRTStar"
 ]

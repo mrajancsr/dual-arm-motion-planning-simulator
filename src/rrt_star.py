@@ -14,6 +14,7 @@ Key implementation details (per Nico's refactor):
 
 from typing import List, Optional, Tuple, Dict
 import numpy as np
+from scipy.spatial import KDTree
 
 try:
     from .dual_arm_system import DualArm
@@ -30,7 +31,9 @@ class RRTStar:
     
     def __init__(self, dual_arm: DualArm, max_iterations: int = 5000,
                  step_size: float = 0.1, goal_threshold: float = 0.1,
-                 rewire_radius: float = 0.5, verbose: bool = False):
+                 rewire_radius: float = 0.5, verbose: bool = False,
+                 use_kdtree: bool = True, workspace_weight: float = 0.3,
+                 use_adaptive_step: bool = True):
         """
         Initialize RRT* planner.
         
@@ -41,6 +44,9 @@ class RRTStar:
             goal_threshold: Distance threshold to consider goal reached
             rewire_radius: Radius for RRT* rewiring optimization
             verbose: Whether to print progress updates
+            use_kdtree: Whether to use KD-tree for nearest neighbor search (default: True)
+            workspace_weight: Weight for workspace distance in metric (0.0-1.0, default: 0.3)
+            use_adaptive_step: Whether to use adaptive step sizing (default: True)
         """
         self.dual_arm = dual_arm
         self.max_iterations = max_iterations
@@ -53,6 +59,18 @@ class RRTStar:
         self.left_limits = dual_arm.left_arm.get_joint_limits()
         self.right_limits = dual_arm.right_arm.get_joint_limits()
         self.config_dim = dual_arm.left_arm.get_num_joints() + dual_arm.right_arm.get_num_joints()
+        
+        # Phase 1: KD-tree optimization
+        self.use_kdtree = use_kdtree
+        self.tree_configs = []
+        self.kdtree = None
+        
+        # Phase 2: Distance metric improvements
+        self.workspace_weight = workspace_weight
+        self.joint_weights = self._compute_joint_weights()
+        
+        # Phase 3: Adaptive step size
+        self.use_adaptive_step = use_adaptive_step
     
     def plan(self, start_config: np.ndarray, goal_config: np.ndarray, 
              progress_callback=None) -> Optional[List[np.ndarray]]:
@@ -198,6 +216,30 @@ class RRTStar:
     def find_nearest_node(self, tree: List[Dict], config: np.ndarray) -> int:
         """
         Find nearest node in tree to given configuration.
+        Uses KD-tree for O(log n) search if enabled, otherwise O(n) linear search.
+        
+        Args:
+            tree: List of tree nodes
+            config: Target configuration
+            
+        Returns:
+            Index of nearest node
+        """
+        if not self.use_kdtree:
+            # Fallback to linear search
+            return self._find_nearest_linear(tree, config)
+        
+        # Rebuild KDTree when tree grows
+        if self.kdtree is None or len(tree) != len(self.tree_configs):
+            self.tree_configs = [node['config'] for node in tree]
+            self.kdtree = KDTree(self.tree_configs)
+        
+        dist, idx = self.kdtree.query(config, k=1)
+        return int(idx)
+    
+    def _find_nearest_linear(self, tree: List[Dict], config: np.ndarray) -> int:
+        """
+        Linear search for nearest node (fallback method for comparison/debugging).
         
         Args:
             tree: List of tree nodes
@@ -217,16 +259,46 @@ class RRTStar:
         
         return nearest_idx
     
+    def _estimate_clearance(self, config: np.ndarray) -> float:
+        """
+        Estimate minimum distance to nearest obstacle.
+        Returns large value if far from obstacles.
+        
+        Args:
+            config: Configuration to check
+            
+        Returns:
+            Estimated clearance distance (minimum distance to nearest obstacle)
+        """
+        if not self.dual_arm.obstacles:
+            return float('inf')
+        
+        # Get arm link positions
+        segments = self.dual_arm._get_all_link_segments(config)
+        
+        min_dist = float('inf')
+        for segment in segments:
+            for obstacle in self.dual_arm.obstacles:
+                # Compute distance from segment midpoint to obstacle center
+                midpoint = (segment[0] + segment[1]) / 2
+                if obstacle['type'] == 'circle':
+                    center = np.array(obstacle['center'])
+                    dist = np.linalg.norm(midpoint - center) - obstacle['radius']
+                    min_dist = min(min_dist, dist)
+        
+        return max(min_dist, 0.01)  # Avoid zero
+    
     def steer(self, from_config: np.ndarray, to_config: np.ndarray) -> np.ndarray:
         """
-        Steer from one configuration towards another.
+        Steer from one configuration towards another with adaptive step size.
+        Uses smaller steps near obstacles, larger steps in open space.
         
         Args:
             from_config: Starting configuration
             to_config: Target configuration
             
         Returns:
-            New configuration moved step_size towards target
+            New configuration moved towards target
         """
         direction = to_config - from_config
         dist = np.linalg.norm(direction)
@@ -234,8 +306,21 @@ class RRTStar:
         if dist <= self.step_size:
             return to_config.copy()
         
-        # Move step_size in direction of target
-        new_config = from_config + (direction / dist) * self.step_size
+        # Adaptive step size based on obstacle proximity
+        if self.use_adaptive_step:
+            clearance = self._estimate_clearance(from_config)
+            
+            if clearance < 0.2:  # Very close to obstacle
+                step = self.step_size * 0.5
+            elif clearance > 0.5:  # Far from obstacles
+                step = self.step_size * 1.5
+            else:  # Medium distance
+                step = self.step_size
+        else:
+            step = self.step_size
+        
+        # Move step distance in direction of target
+        new_config = from_config + (direction / dist) * step
         return new_config
     
     def is_path_valid(self, config1: np.ndarray, config2: np.ndarray, 
@@ -352,16 +437,93 @@ class RRTStar:
         path.reverse()
         return path
     
-    def distance(self, config1: np.ndarray, config2: np.ndarray) -> float:
+    def _angular_distance(self, angle1: float, angle2: float) -> float:
         """
-        Compute Euclidean distance between two configurations.
+        Compute shortest angular distance (handles wrapping at ±π).
+        
+        Args:
+            angle1: First angle in radians
+            angle2: Second angle in radians
+            
+        Returns:
+            Shortest angular distance (always positive)
+        """
+        diff = angle2 - angle1
+        # Wrap to [-π, π]
+        while diff > np.pi:
+            diff -= 2 * np.pi
+        while diff < -np.pi:
+            diff += 2 * np.pi
+        return abs(diff)
+    
+    def _compute_joint_weights(self) -> np.ndarray:
+        """
+        Compute weights for each joint (earlier joints weighted higher).
+        Base joints matter more than end-effector joints for overall configuration.
+        
+        Returns:
+            Array of joint weights
+        """
+        n_left = self.dual_arm.left_arm.get_num_joints()
+        n_right = self.dual_arm.right_arm.get_num_joints()
+        
+        # Exponential decay: base joints = 1.0, end joints = 0.3
+        left_weights = np.linspace(1.0, 0.3, n_left)
+        right_weights = np.linspace(1.0, 0.3, n_right)
+        
+        return np.concatenate([left_weights, right_weights])
+    
+    def _workspace_distance(self, config1: np.ndarray, config2: np.ndarray) -> float:
+        """
+        Compute Euclidean distance between end-effector positions in workspace.
         
         Args:
             config1: First configuration
             config2: Second configuration
             
         Returns:
-            Euclidean distance
+            Sum of end-effector distances for both arms
         """
-        return np.linalg.norm(config1 - config2)
+        left1, right1 = self.dual_arm._split_configuration(config1)
+        left2, right2 = self.dual_arm._split_configuration(config2)
+        
+        # Compute end-effector positions
+        left_ee1 = self.dual_arm.left_arm.forward_kinematics(*left1)
+        left_ee2 = self.dual_arm.left_arm.forward_kinematics(*left2)
+        right_ee1 = self.dual_arm.right_arm.forward_kinematics(*right1)
+        right_ee2 = self.dual_arm.right_arm.forward_kinematics(*right2)
+        
+        left_dist = np.linalg.norm(left_ee1 - left_ee2)
+        right_dist = np.linalg.norm(right_ee1 - right_ee2)
+        
+        return left_dist + right_dist
+    
+    def distance(self, config1: np.ndarray, config2: np.ndarray) -> float:
+        """
+        Hybrid distance metric combining:
+        1. Angular-wrapped joint distances (weighted by importance)
+        2. Task-space (workspace) end-effector distance
+        
+        Args:
+            config1: First configuration
+            config2: Second configuration
+            
+        Returns:
+            Weighted combination of joint-space and workspace distance
+        """
+        # Component 1: Joint-space distance with angular wrapping and weighting
+        joint_diffs = []
+        for i in range(len(config1)):
+            joint_diffs.append(self._angular_distance(config1[i], config2[i]))
+        joint_diffs = np.array(joint_diffs)
+        
+        weighted_joint_dist = np.sqrt(np.sum(self.joint_weights * joint_diffs**2))
+        
+        # Component 2: Workspace distance
+        workspace_dist = self._workspace_distance(config1, config2)
+        
+        # Combine: (1-workspace_weight) * joint-space + workspace_weight * task-space
+        # Default: 70% joint-space, 30% task-space
+        return (1 - self.workspace_weight) * weighted_joint_dist + \
+               self.workspace_weight * workspace_dist
 

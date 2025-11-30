@@ -257,6 +257,10 @@ class DualArm:
         # Check if any left and right segments intersect
         for seg_left in left_segments:
             for seg_right in right_segments:
+                # Fast bounding box pre-check
+                if not self._segments_bbox_overlap(seg_left, seg_right):
+                    continue  # Skip expensive intersection test
+                
                 if self._line_segments_intersect(seg_left, seg_right):
                     return False
         
@@ -268,6 +272,35 @@ class DualArm:
         
         return True
 
+    def _segments_bbox_overlap(self, seg1: Tuple[np.ndarray, np.ndarray],
+                               seg2: Tuple[np.ndarray, np.ndarray]) -> bool:
+        """
+        Fast bounding box overlap test (AABB - Axis-Aligned Bounding Box).
+        Returns False if segments definitely don't intersect.
+        
+        Args:
+            seg1: First line segment as (start, end)
+            seg2: Second line segment as (start, end)
+            
+        Returns:
+            True if bounding boxes overlap (segments might intersect)
+            False if bounding boxes don't overlap (segments definitely don't intersect)
+        """
+        # Get bounding boxes
+        x1_min = min(seg1[0][0], seg1[1][0])
+        x1_max = max(seg1[0][0], seg1[1][0])
+        y1_min = min(seg1[0][1], seg1[1][1])
+        y1_max = max(seg1[0][1], seg1[1][1])
+        
+        x2_min = min(seg2[0][0], seg2[1][0])
+        x2_max = max(seg2[0][0], seg2[1][0])
+        y2_min = min(seg2[0][1], seg2[1][1])
+        y2_max = max(seg2[0][1], seg2[1][1])
+        
+        # Check overlap
+        return not (x1_max < x2_min or x2_max < x1_min or 
+                    y1_max < y2_min or y2_max < y1_min)
+    
     def _line_segments_intersect(self, seg1: Tuple[np.ndarray, np.ndarray], 
                                  seg2: Tuple[np.ndarray, np.ndarray]) -> bool:
         """
