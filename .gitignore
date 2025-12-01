@@ -207,3 +207,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Web app files
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+backend.log
+frontend.log
+.backend.pid
+.frontend.pid

@@ -1,6 +1,6 @@
 # 🦾 Dual-Arm Motion Planning Simulator
 
-A Python-based simulator for dual-arm robot motion planning using RRT* in configuration space. Supports 2-link and 6-link planar robot arms with collision detection and path planning.
+A Python-based simulator for dual-arm robot motion planning using RRT* in configuration space. Supports 2-link, 3-link, and 6-link planar robot arms with collision detection and path planning.
 
 ---
 
@@ -9,11 +9,15 @@ A Python-based simulator for dual-arm robot motion planning using RRT* in config
 This simulator is developed for the **Computational Robotics** course (Fall 2025). It demonstrates fundamental robotics principles including forward/inverse kinematics, configuration space visualization, and sampling-based motion planning (RRT*).
 
 ### ✨ Key Features
-- Forward and Inverse Kinematics for 2-link and 6-link planar arms  
+- Forward and Inverse Kinematics for 2-link, 3-link, and 6-link planar arms  
 - Dual-arm configuration and independent motion control  
 - Workspace and C-space (configuration space) visualization  
-- RRT* (Rapidly-exploring Random Tree Star) motion planning algorithm  
-- Collision detection and path validation  
+- RRT* (Rapidly-exploring Random Tree Star) motion planning with optimizations:
+  - KD-tree nearest neighbor search (10-100x speedup)
+  - Improved distance metrics (angular wrapping, joint weighting, workspace distance)
+  - Adaptive step sizing for obstacle navigation
+  - Parallel planning with multi-core support
+- Collision detection and path validation (with bounding box optimization)
 - Joint limit enforcement in IK solver
 
 ---
@@ -108,45 +112,79 @@ Visualization in Workspace
 pip install -r requirements.txt
 ```
 
-### 2. Run End-to-End Tests (Recommended)
+### 2. Run Comprehensive Test Suite (Recommended) ⭐
 ```bash
-# Test complete workflow: workspace goals → IK → RRT* → visualization
-python test_end_to_end.py
+# Quick test (2-link, baseline vs optimized)
+./run_tests.sh quick
+
+# Full test suite (all arm types, all optimizations)
+./run_tests.sh all
+
+# Or use Python directly
+./venv/bin/python test_comprehensive.py --quick
 ```
 
-This demonstrates the **complete workflow**:
-1. Define workspace goals (x, y positions)
-2. Convert to C-space using Inverse Kinematics
-3. Plan collision-free path using RRT*
-4. Validate and visualize path
+The comprehensive test suite tests:
+- 2-link, 3-link, and 6-link arms
+- All optimization configurations
+- Obstacle avoidance
+- Parallel planning
+- Performance benchmarks
 
-### 3. Run Component Tests
+See **[TESTING.md](TESTING.md)** for detailed testing guide and optimization usage.
+
+### 3. Run Specific Tests
 ```bash
-# Test RRT* implementation directly
-python test_rrt_star.py
+# Interactive obstacle planning GUI
+./run_tests.sh gui
 
-# Test dual-arm system components
-python test_six_link_arm.py
+# Test 3-link arm with visualization
+./run_tests.sh 3link
+
+# Compare optimizations
+./run_tests.sh optimization
+
+# Benchmark all arm types
+./run_tests.sh benchmark
 ```
 
-### 4. Run Legacy Demo (Optional)
+### 4. Legacy Tests
 ```bash
-# Old demo showing workspace/C-space visualization
-python demo.py
+# Original optimization tests
+./venv/bin/python test_optimizations.py
+
+# End-to-end workflow
+./venv/bin/python test_end_to_end.py
 ```
 
-## Main Runner File
+---
 
-**`test_end_to_end.py`** is the main runner file that demonstrates the complete motion planning workflow. It:
-- Generates planning problems
-- Converts workspace goals to C-space using IK
-- Plans paths using RRT*
-- Visualizes results
+## 🌐 Web Application
 
-Run it with:
+An interactive web-based visualization is now available! This provides a modern UI for planning, visualizing RRT* tree growth, and analyzing results in real-time.
+
+### Quick Start
+
 ```bash
-python test_end_to_end.py
+# Install web dependencies (one-time)
+./venv/bin/pip install -r backend/requirements-web.txt
+cd frontend && npm install && cd ..
+
+# Start web app (backend + frontend)
+./run_webapp.sh
 ```
+
+Access the app at **http://localhost:5173**
+
+### Features
+
+- 🎯 **Interactive Planning**: Real-time RRT* visualization
+- 🦾 **Multiple Arm Types**: Switch between 2-link, 3-link, and 6-link arms
+- 🎨 **Visual Feedback**: See tree growth and solution paths
+- ⚙️ **Live Configuration**: Adjust parameters on-the-fly
+- 📊 **Performance Metrics**: View planning statistics
+
+See **[webapp/README.md](webapp/README.md)** for detailed documentation, API reference, and troubleshooting.
 
 ---
 

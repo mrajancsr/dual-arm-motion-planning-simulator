@@ -80,7 +80,7 @@ class RRTStar:
         Args:
             start_config: Start configuration as numpy array
             goal_config: Goal configuration as numpy array
-            progress_callback: Optional callback function(tree, iteration) called every 1000 iterations
+            progress_callback: Optional callback function(tree, iteration) called every 10 iterations
             
         Returns:
             List of configurations forming the path, or None if planning fails
@@ -109,8 +109,8 @@ class RRTStar:
                       f"({100 * (iteration + 1) / self.max_iterations:.1f}%) - "
                       f"Tree size: {len(tree)} nodes{goal_status}")
             
-            # Call progress callback every 1000 iterations
-            if progress_callback is not None and (iteration + 1) % 1000 == 0:
+            # Call progress callback every 10 iterations
+            if progress_callback is not None and (iteration + 1) % 10 == 0:
                 progress_callback(tree, iteration + 1)
             
             # Sample random configuration (with goal bias)
@@ -159,7 +159,7 @@ class RRTStar:
             # Rewire neighbors
             self.rewire(tree, new_node_idx, neighbors)
             
-            # Check if goal is reached (but don't break - keep refining)
+            # Check if goal is reached
             if self.distance(new_config, goal_config) < self.goal_threshold:
                 # Update best goal if this path is better
                 if best_cost < best_goal_cost:
@@ -167,7 +167,13 @@ class RRTStar:
                     best_goal_cost = best_cost
                     if self.verbose:
                         print(f"  ✓ Goal reached at iteration {iteration + 1}/{self.max_iterations} "
-                              f"(cost: {best_cost:.3f}) - continuing to refine...")
+                              f"(cost: {best_cost:.3f})")
+                    # Early termination - stop once we have a valid path
+                    print(f"[RRT*] Goal found! Terminating early at iteration {iteration + 1}", flush=True)
+                    break
+        
+        # Store final tree for API access
+        self._last_tree = tree
         
         # Reconstruct path if goal reached
         if goal_node_idx is not None:
@@ -526,4 +532,177 @@ class RRTStar:
         # Default: 70% joint-space, 30% task-space
         return (1 - self.workspace_weight) * weighted_joint_dist + \
                self.workspace_weight * workspace_dist
+    
+    def _serialize_tree(self, tree: List[Dict]) -> Dict:
+        """
+        Convert tree to JSON-serializable format for API/visualization.
+        
+        Args:
+            tree: List of tree nodes
+            
+        Returns:
+            Dictionary with serialized tree data
+        """
+        return {
+            'nodes': [
+                {
+                    'id': i,
+                    'config': node['config'].tolist(),
+                    'parent': node['parent'],
+                    'cost': float(node['cost'])
+                }
+                for i, node in enumerate(tree)
+            ]
+        }
+    
+    def plan_single_arm(self, arm: str, start_config: np.ndarray, 
+                       goal_config: np.ndarray,
+                       progress_callback=None) -> Optional[List[np.ndarray]]:
+        """
+        Plan for single arm while keeping other arm stationary.
+        
+        This method plans a path where only one arm moves, while the other
+        stays fixed at its starting position. Useful for handoff planning
+        where arms move sequentially.
+        
+        Args:
+            arm: 'left' or 'right' - which arm to plan for
+            start_config: Starting configuration (full dual-arm config)
+            goal_config: Goal configuration (full dual-arm config)
+            progress_callback: Optional callback(tree, iteration)
+            
+        Returns:
+            List of configurations forming path, or None if planning fails
+        """
+        # Determine which joints belong to which arm
+        num_joints = self.dual_arm.left_arm.get_num_joints()
+        
+        if arm == 'left':
+            active_indices = list(range(num_joints))
+            fixed_indices = list(range(num_joints, num_joints * 2))
+        else:  # right
+            active_indices = list(range(num_joints, num_joints * 2))
+            fixed_indices = list(range(num_joints))
+        
+        # Get fixed joint values (inactive arm stays here)
+        fixed_joints = start_config[fixed_indices].copy()
+        
+        if self.verbose:
+            print(f"[RRT* Single Arm] Planning for {arm} arm", flush=True)
+            print(f"  Active joints: {active_indices}", flush=True)
+            print(f"  Fixed joints: {fixed_indices} at {fixed_joints}", flush=True)
+        
+        print(f"[RRT* Single Arm] Initializing tree with start config...", flush=True)
+        
+        # Initialize tree with start configuration
+        tree = [{
+            'config': start_config.copy(),
+            'parent': None,
+            'cost': 0.0
+        }]
+        
+        goal_node_idx = None
+        best_goal_cost = float('inf')
+        
+        # Main RRT* loop
+        print(f"[RRT* Single Arm] Starting main loop ({self.max_iterations} iterations)...", flush=True)
+        for iteration in range(self.max_iterations):
+            if iteration % 100 == 0:
+                print(f"[RRT* Single Arm] Iteration {iteration}...", flush=True)
+            # Sample random configuration (only active arm)
+            if np.random.random() < 0.2:  # Goal bias
+                random_config = goal_config.copy()
+            else:
+                # Sample only active joints
+                random_config = start_config.copy()
+                for idx in active_indices:
+                    random_config[idx] = np.random.uniform(-np.pi, np.pi)
+                # Keep fixed joints
+                random_config[fixed_indices] = fixed_joints
+            
+            # Find nearest node
+            nearest_idx = self.find_nearest_node(tree, random_config)
+            nearest_config = tree[nearest_idx]['config']
+            
+            # Steer toward random config (respecting active/fixed joints)
+            new_config = self.steer(nearest_config, random_config)
+            # Ensure fixed joints stay fixed
+            new_config[fixed_indices] = fixed_joints
+            
+            # Check if path is valid
+            if not self.is_path_valid(nearest_config, new_config):
+                continue
+            
+            # Find nodes within rewire radius
+            near_indices = self.find_neighbors(tree, new_config, self.rewire_radius)
+            
+            # Find best parent
+            best_parent_idx = nearest_idx
+            best_cost = tree[nearest_idx]['cost'] + self.distance(nearest_config, new_config)
+            
+            for near_idx in near_indices:
+                near_config = tree[near_idx]['config']
+                tentative_cost = tree[near_idx]['cost'] + self.distance(near_config, new_config)
+                
+                if tentative_cost < best_cost:
+                    if self.is_path_valid(near_config, new_config):
+                        best_parent_idx = near_idx
+                        best_cost = tentative_cost
+            
+            # Add new node
+            new_node = {
+                'config': new_config,
+                'parent': best_parent_idx,
+                'cost': best_cost
+            }
+            tree.append(new_node)
+            new_node_idx = len(tree) - 1
+            
+            # Rewire tree
+            for near_idx in near_indices:
+                near_config = tree[near_idx]['config']
+                new_cost = best_cost + self.distance(new_config, near_config)
+                
+                if new_cost < tree[near_idx]['cost']:
+                    if self.is_path_valid(new_config, near_config):
+                        tree[near_idx]['parent'] = new_node_idx
+                        tree[near_idx]['cost'] = new_cost
+            
+            # Check if goal reached
+            dist_to_goal = self.distance(new_config, goal_config)
+            if dist_to_goal < self.goal_threshold:
+                if best_cost < best_goal_cost:
+                    goal_node_idx = new_node_idx
+                    best_goal_cost = best_cost
+                    if self.verbose:
+                        print(f"  Goal reached at iteration {iteration+1}, cost: {best_goal_cost:.3f}")
+                    # Early termination - stop once we have a valid path
+                    print(f"[RRT* Single Arm] Goal found! Terminating early at iteration {iteration + 1}", flush=True)
+                    
+                    # Update progress one last time
+                    if progress_callback is not None:
+                        progress_callback(tree, iteration + 1)
+                    
+                    break
+            
+            # Progress callback
+            if progress_callback is not None and (iteration + 1) % 10 == 0:
+                progress_callback(tree, iteration + 1)
+        
+        # Store final tree
+        self._last_tree = tree
+        
+        # Reconstruct path if goal reached
+        if goal_node_idx is not None:
+            if self.verbose:
+                print(f"  [Single Arm] Path found with cost: {best_goal_cost:.3f}")
+            path = self.reconstruct_path(tree, goal_node_idx)
+            # Add goal config if reachable
+            if self.is_path_valid(path[-1], goal_config):
+                path.append(goal_config)
+            return path
+        
+        if self.verbose:
+            print(f"  [Single Arm] No path found after {self.max_iterations} iterations")
+        return None
 
