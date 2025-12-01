@@ -184,3 +184,4 @@ cd /Users/kayacelebi/Projects/Columbia-git/dual-arm-motion-planning-simulator
 
 **The UI now provides instant, comprehensive, real-time feedback!** 🚀✨
 
+

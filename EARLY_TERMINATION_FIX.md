@@ -149,3 +149,4 @@ cd /Users/kayacelebi/Projects/Columbia-git/dual-arm-motion-planning-simulator
 
 **Planning is now 10x faster with early termination!** ⚡
 
+

@@ -30,9 +30,9 @@ class HandoffPlanner:
         self.left_arm = dual_arm.left_arm
         self.right_arm = dual_arm.right_arm
         
-    def check_reachability(self, point: np.ndarray) -> Dict:
+    def check_reachability(self, point: np.ndarray, verbose: bool = False) -> Dict:
         """
-        Check if a point is reachable by each arm.
+        Check if a point is reachable by each arm using IK verification.
         
         Args:
             point: [x, y] position in workspace
@@ -45,13 +45,14 @@ class HandoffPlanner:
                 'point': np.ndarray
             }
         """
-        # Get arm link lengths
-        # NOTE: Direct attribute access has a bug, so we use defaults for TwoLinkArm
-        # TODO: Fix the attribute access issue in DualArm
-        left_L1, left_L2 = 1.0, 0.7  # TwoLinkArm defaults
-        right_L1, right_L2 = 1.0, 0.7  # TwoLinkArm defaults
+        # Calculate distances from bases for quick filtering
+        dist_left = np.linalg.norm(point - self.dual_arm.left_base)
+        dist_right = np.linalg.norm(point - self.dual_arm.right_base)
         
-        # Try to get actual values for other arm types (ThreeLinkArm, etc.)
+        # Get arm link lengths for distance check
+        left_L1, left_L2 = 1.0, 0.7  # TwoLinkArm defaults
+        right_L1, right_L2 = 1.0, 0.7
+        
         if hasattr(self.left_arm, 'link_lengths'):
             try:
                 ll = self.left_arm.link_lengths
@@ -68,19 +69,58 @@ class HandoffPlanner:
             except:
                 pass
         
-        # Calculate reach limits
         left_max_reach = left_L1 + left_L2
         left_min_reach = abs(left_L1 - left_L2)
         right_max_reach = right_L1 + right_L2
         right_min_reach = abs(right_L1 - right_L2)
         
-        # Calculate distances from bases
-        dist_left = np.linalg.norm(point - self.dual_arm.left_base)
-        dist_right = np.linalg.norm(point - self.dual_arm.right_base)
+        # First check distance bounds (fast pre-filter)
+        left_distance_ok = left_min_reach <= dist_left <= left_max_reach
+        right_distance_ok = right_min_reach <= dist_right <= right_max_reach
         
-        # Check reachability
-        left_reachable = left_min_reach <= dist_left <= left_max_reach
-        right_reachable = right_min_reach <= dist_right <= right_max_reach
+        # Now verify with actual IK (checks if point is actually reachable, not behind base, etc.)
+        left_reachable = False
+        right_reachable = False
+        
+        if left_distance_ok:
+            # Convert to left arm's local frame
+            local_left = point - self.dual_arm.left_base
+            # Try IK (use ik_iterative, the actual method name)
+            try:
+                ik_result = self.left_arm.ik_iterative(local_left[0], local_left[1])
+                if ik_result is not None:
+                    left_reachable = True
+                    if verbose:
+                        print(f"[check_reachability] Left IK SUCCESS for global {point}, local {local_left}", flush=True)
+                else:
+                    if verbose:
+                        print(f"[check_reachability] Left IK FAILED (returned None) for global {point}, local {local_left}, dist={dist_left:.3f}", flush=True)
+            except Exception as e:
+                if verbose:
+                    print(f"[check_reachability] Left IK EXCEPTION for global {point}, local {local_left}: {e}", flush=True)
+        else:
+            if verbose:
+                print(f"[check_reachability] Left distance check FAILED for global {point}, dist={dist_left:.3f}, range=[{left_min_reach:.3f}, {left_max_reach:.3f}]", flush=True)
+        
+        if right_distance_ok:
+            # Convert to right arm's local frame
+            local_right = point - self.dual_arm.right_base
+            # Try IK (use ik_iterative, the actual method name)
+            try:
+                ik_result = self.right_arm.ik_iterative(local_right[0], local_right[1])
+                if ik_result is not None:
+                    right_reachable = True
+                    if verbose:
+                        print(f"[check_reachability] Right IK SUCCESS for global {point}, local {local_right}", flush=True)
+                else:
+                    if verbose:
+                        print(f"[check_reachability] Right IK FAILED (returned None) for global {point}, local {local_right}, dist={dist_right:.3f}", flush=True)
+            except Exception as e:
+                if verbose:
+                    print(f"[check_reachability] Right IK EXCEPTION for global {point}, local {local_right}: {e}", flush=True)
+        else:
+            if verbose:
+                print(f"[check_reachability] Right distance check FAILED for global {point}, dist={dist_right:.3f}, range=[{right_min_reach:.3f}, {right_max_reach:.3f}]", flush=True)
         
         return {
             'left_reachable': left_reachable,
@@ -107,8 +147,13 @@ class HandoffPlanner:
                 'single_arm_possible': bool
             }
         """
-        start_reach = self.check_reachability(start_pos)
-        goal_reach = self.check_reachability(goal_pos)
+        print(f"[determine_arms] Checking start pos {start_pos}...", flush=True)
+        start_reach = self.check_reachability(start_pos, verbose=True)
+        print(f"[determine_arms] Start reach: left={start_reach['left_reachable']}, right={start_reach['right_reachable']}", flush=True)
+        
+        print(f"[determine_arms] Checking goal pos {goal_pos}...", flush=True)
+        goal_reach = self.check_reachability(goal_pos, verbose=True)
+        print(f"[determine_arms] Goal reach: left={goal_reach['left_reachable']}, right={goal_reach['right_reachable']}", flush=True)
         
         # Determine which arms can reach start and goal
         left_reaches_start = start_reach['left_reachable']
@@ -251,12 +296,13 @@ class HandoffPlanner:
         # Convert back to array
         intersection_points = np.array(list(intersection))
         
-        # Filter points too close to obstacles and too close to bases
+        # Filter points: check obstacles, height, AND IK reachability
         clearance = 0.3
-        min_height = 0.5  # Minimum y-coordinate for handoff
+        min_height = 0.3  # Minimum y-coordinate for handoff (lowered from 0.5)
         safe_points = []
         
-        for point in intersection_points:
+        print(f"[find_handoff_point] Filtering {len(intersection_points)} intersection points...")
+        for i, point in enumerate(intersection_points):
             # Skip points too low
             if point[1] < min_height:
                 continue
@@ -271,17 +317,24 @@ class HandoffPlanner:
                         break
             
             if is_safe:
-                # Verify IK can actually reach this point
-                left_reach = self.check_reachability(point)
-                if left_reach['left_reachable'] and left_reach['right_reachable']:
+                # Verify IK can actually reach this point (CRITICAL CHECK!)
+                reach_check = self.check_reachability(point)
+                if reach_check['left_reachable'] and reach_check['right_reachable']:
                     safe_points.append(point)
+                elif (i % 10 == 0):  # Log every 10th rejected point to reduce spam
+                    print(f"[find_handoff_point] Point {point} rejected: "
+                          f"left={reach_check['left_reachable']}, right={reach_check['right_reachable']}", 
+                          flush=True)
         
-        print(f"[find_handoff_point] Safe points (y >= {min_height}): {len(safe_points)}")
+        print(f"[find_handoff_point] Safe IK-reachable points (y >= {min_height}): {len(safe_points)}", flush=True)
         
         if not safe_points:
-            # Fall back to all intersection points if filtering was too aggressive
-            print(f"[find_handoff_point] No safe points found, using all intersection points")
-            safe_points = intersection_points
+            # This is a real failure - no points are reachable by both arms via IK
+            raise ValueError(
+                f"No IK-reachable handoff points found! "
+                f"Intersection had {len(intersection_points)} points, but none passed IK check. "
+                f"Left base: {self.dual_arm.left_base}, Right base: {self.dual_arm.right_base}"
+            )
         
         safe_points = np.array(safe_points)
         
@@ -520,19 +573,19 @@ class HandoffPlanner:
         arm_config = None
         try:
             print(f"[_get_config_for_position] Calling IK for {arm} arm...", flush=True)
-            # Try IK with default initial guess
-            arm_config = arm_obj.ik_iterative(local_pos, max_iterations=200, tolerance=1e-3)
+            # Try IK with default initial guess (note: use max_iters and tol, not max_iterations and tolerance)
+            arm_config = arm_obj.ik_iterative(local_pos[0], local_pos[1], max_iters=200, tol=1e-3)
             print(f"[_get_config_for_position] IK returned: {arm_config}", flush=True)
             
             # If failed, try with different initial guesses
             if arm_config is None:
                 for _ in range(5):
-                    init_guess = np.random.uniform(-np.pi, np.pi, arm_obj.get_num_joints())
+                    init_guess = tuple(np.random.uniform(-np.pi, np.pi, arm_obj.get_num_joints()))
                     arm_config = arm_obj.ik_iterative(
-                        local_pos, 
-                        initial_guess=init_guess,
-                        max_iterations=200,
-                        tolerance=1e-3
+                        local_pos[0], local_pos[1],
+                        theta_init=init_guess,
+                        max_iters=200,
+                        tol=1e-3
                     )
                     if arm_config is not None:
                         break
