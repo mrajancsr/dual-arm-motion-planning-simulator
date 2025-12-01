@@ -17,17 +17,37 @@ export function useCanvas(worldBounds = { minX: -4, maxX: 4, minY: -2, maxY: 4 }
     const handleResize = () => {
       const parent = canvas.parentElement;
       if (parent) {
-        setDimensions({
-          width: parent.clientWidth,
-          height: parent.clientHeight
+        const width = parent.clientWidth;
+        const height = parent.clientHeight;
+        // Only update if dimensions actually changed
+        setDimensions(prev => {
+          if (prev.width !== width || prev.height !== height) {
+            return { width, height };
+          }
+          return prev;
         });
       }
     };
     
+    // Initial resize
     handleResize();
+    
+    // Use ResizeObserver to detect parent size changes
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    
+    if (canvas.parentElement) {
+      resizeObserver.observe(canvas.parentElement);
+    }
+    
+    // Also listen for window resize as backup
     window.addEventListener('resize', handleResize);
     
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
   
   const getContext = () => {

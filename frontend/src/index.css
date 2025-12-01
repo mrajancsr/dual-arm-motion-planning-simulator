@@ -23,9 +23,9 @@ code {
     monospace;
 }
 
-.app {
-  display: flex;
-  height: 100vh;
+/* App layout is now handled by Tailwind classes in App.jsx */
+html, body, #root {
+  height: 100%;
   overflow: hidden;
 }
 

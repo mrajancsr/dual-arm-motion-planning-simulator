@@ -178,13 +178,33 @@ Access the app at **http://localhost:5173**
 
 ### Features
 
-- 🎯 **Interactive Planning**: Real-time RRT* visualization
+- 🎯 **Interactive Planning**: Real-time RRT* visualization with handoff planning
 - 🦾 **Multiple Arm Types**: Switch between 2-link, 3-link, and 6-link arms
-- 🎨 **Visual Feedback**: See tree growth and solution paths
+- 🎨 **Visual Feedback**: See tree growth, solution paths, and handoff points
 - ⚙️ **Live Configuration**: Adjust parameters on-the-fly
-- 📊 **Performance Metrics**: View planning statistics
+- 📊 **Performance Metrics**: View planning statistics with ETA
+- 🤝 **Handoff Planning**: Intelligent arm assignment and handoff point calculation
+- 🎯 **Item-Based Planning**: Drag item start/goal positions (not end-effectors)
 
-See **[webapp/README.md](webapp/README.md)** for detailed documentation, API reference, and troubleshooting.
+### Handoff Planning
+
+The web app supports intelligent handoff planning:
+- Automatically determines which arm should grab and deliver items
+- Calculates optimal handoff points in workspace intersection
+- Executes phase-based RRT* planning (grab phase → handoff → delivery phase)
+- Visualizes handoff strategy and point on canvas
+
+### API Endpoints
+
+- `POST /api/plan-handoff` - Start handoff-based planning
+- `POST /api/plan` - Start traditional dual-arm planning
+- `GET /api/status/:job_id` - Get planning status and progress
+- `GET /api/tree/:job_id` - Get RRT* tree data for visualization
+- `GET /api/path/:job_id` - Get solution path
+- `POST /api/validate-config` - Validate arm configuration
+- `GET /api/arm-types` - Get available arm types
+
+See **[webapp/README.md](webapp/README.md)** for detailed API documentation and troubleshooting.
 
 ---
 
@@ -357,15 +377,28 @@ The IK solver (`ik_iterative`) now:
 
 ## 📝 Recent Changes
 
-### IK Solver Fix
-- **Fixed**: IK solver now clips joint angles to limits during iteration
-- **Impact**: IK solutions now respect joint limits, improving success rate
-- **Files**: `src/arms/two_link_arm.py`, `src/arms/six_link_arm.py`
+### Handoff Planning Architecture
+- **Added**: Intelligent handoff planner that determines grab/delivery arms
+- **Added**: Workspace intersection analysis for handoff point calculation
+- **Added**: Phase-based RRT* planning (grab → handoff → delivery)
+- **Files**: `src/handoff_planner.py`, `backend/api/planner_api.py`
 
-### Code Cleanup
-- Removed old/unused test files (`test_simulator.py`, `test_motion_path.py`, `test_path_animation.py`)
-- Consolidated documentation into single README
-- Improved problem generation with better validation
+### Web Application Enhancements
+- **Added**: Real-time RRT* tree visualization
+- **Added**: Item-based planning (drag item positions, not end-effectors)
+- **Added**: Draggable arm bases
+- **Added**: Handoff strategy visualization
+- **Fixed**: Early termination when goal is found (10x speedup)
+- **Fixed**: IK reachability verification for handoff points
+
+### RRT* Optimizations
+- **Added**: Early termination when goal is reached
+- **Improved**: Progress callbacks every 10 iterations (was 1000)
+- **Fixed**: Tree visualization data synchronization
+
+### Multi-Link Arm Support
+- **Added**: Full 3-link arm support in workspace generation
+- **Fixed**: Generic workspace generator for N-link arms
 
 ---
 

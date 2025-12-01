@@ -668,14 +668,15 @@ class RRTStar:
                         tree[near_idx]['parent'] = new_node_idx
                         tree[near_idx]['cost'] = new_cost
             
-            # Check if goal reached
-            dist_to_goal = self.distance(new_config, goal_config)
-            if dist_to_goal < self.goal_threshold:
+            # Check if goal reached (only check active arm joints, not fixed arm)
+            # Compare only the joints that are actually being planned
+            active_dist = np.linalg.norm(new_config[active_indices] - goal_config[active_indices])
+            if active_dist < self.goal_threshold:
                 if best_cost < best_goal_cost:
                     goal_node_idx = new_node_idx
                     best_goal_cost = best_cost
                     if self.verbose:
-                        print(f"  Goal reached at iteration {iteration+1}, cost: {best_goal_cost:.3f}")
+                        print(f"  Goal reached at iteration {iteration+1}, cost: {best_goal_cost:.3f}, active_dist: {active_dist:.3f}")
                     # Early termination - stop once we have a valid path
                     print(f"[RRT* Single Arm] Goal found! Terminating early at iteration {iteration + 1}", flush=True)
                     

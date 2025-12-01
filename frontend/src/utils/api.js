@@ -69,6 +69,32 @@ export const api = {
   planWithHandoff: async (config) => {
     const response = await axios.post(`${API_BASE}/plan-handoff`, config);
     return response.data;
+  },
+  
+  // Demo Management
+  
+  /**
+   * List all available demos
+   */
+  listDemos: async () => {
+    const response = await axios.get(`${API_BASE}/demos`);
+    return response.data;
+  },
+  
+  /**
+   * Get a specific demo with saved results
+   */
+  getDemo: async (demoId) => {
+    const response = await axios.get(`${API_BASE}/demos/${demoId}`);
+    return response.data;
+  },
+  
+  /**
+   * Save a new demo
+   */
+  saveDemo: async (demoData) => {
+    const response = await axios.post(`${API_BASE}/demos`, demoData);
+    return response.data;
   }
 };
 

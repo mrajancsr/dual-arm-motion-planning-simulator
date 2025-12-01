@@ -49,78 +49,107 @@ class HandoffPlanner:
         dist_left = np.linalg.norm(point - self.dual_arm.left_base)
         dist_right = np.linalg.norm(point - self.dual_arm.right_base)
         
-        # Get arm link lengths for distance check
-        left_L1, left_L2 = 1.0, 0.7  # TwoLinkArm defaults
-        right_L1, right_L2 = 1.0, 0.7
+        # Get arm link lengths for distance check (works for N-link arms)
+        left_max_reach = 1.7  # Default 2-link
+        left_min_reach = 0.3
+        right_max_reach = 1.7
+        right_min_reach = 0.3
         
+        # Try to get actual link lengths from arms
         if hasattr(self.left_arm, 'link_lengths'):
             try:
                 ll = self.left_arm.link_lengths
-                if isinstance(ll, (list, tuple, np.ndarray)) and len(ll) >= 2:
-                    left_L1, left_L2 = float(ll[0]), float(ll[1])
+                if isinstance(ll, (list, tuple, np.ndarray)) and len(ll) > 0:
+                    # Sum all link lengths for max reach (works for 2-link, 3-link, 6-link, etc.)
+                    left_max_reach = float(np.sum(ll))
+                    # Min reach: sum - 2*max_link (approximate)
+                    left_min_reach = max(0.1, float(left_max_reach - 2 * np.max(ll)))
             except:
                 pass
         
         if hasattr(self.right_arm, 'link_lengths'):
             try:
                 ll = self.right_arm.link_lengths
-                if isinstance(ll, (list, tuple, np.ndarray)) and len(ll) >= 2:
-                    right_L1, right_L2 = float(ll[0]), float(ll[1])
+                if isinstance(ll, (list, tuple, np.ndarray)) and len(ll) > 0:
+                    right_max_reach = float(np.sum(ll))
+                    right_min_reach = max(0.1, float(right_max_reach - 2 * np.max(ll)))
             except:
                 pass
         
-        left_max_reach = left_L1 + left_L2
-        left_min_reach = abs(left_L1 - left_L2)
-        right_max_reach = right_L1 + right_L2
-        right_min_reach = abs(right_L1 - right_L2)
-        
         # First check distance bounds (fast pre-filter)
+        # But don't skip IK if distance check fails - IK is the authoritative check
         left_distance_ok = left_min_reach <= dist_left <= left_max_reach
         right_distance_ok = right_min_reach <= dist_right <= right_max_reach
         
         # Now verify with actual IK (checks if point is actually reachable, not behind base, etc.)
+        # IK is the authoritative check - distance check is just a fast pre-filter
+        # We still try IK even if distance check fails (distance might be approximate)
         left_reachable = False
         right_reachable = False
         
-        if left_distance_ok:
-            # Convert to left arm's local frame
-            local_left = point - self.dual_arm.left_base
-            # Try IK (use ik_iterative, the actual method name)
-            try:
-                ik_result = self.left_arm.ik_iterative(local_left[0], local_left[1])
-                if ik_result is not None:
-                    left_reachable = True
-                    if verbose:
-                        print(f"[check_reachability] Left IK SUCCESS for global {point}, local {local_left}", flush=True)
-                else:
-                    if verbose:
-                        print(f"[check_reachability] Left IK FAILED (returned None) for global {point}, local {local_left}, dist={dist_left:.3f}", flush=True)
-            except Exception as e:
+        # Always try IK for left arm (distance check is just a hint)
+        local_left = point - self.dual_arm.left_base
+        try:
+            ik_result = self.left_arm.ik_iterative(local_left[0], local_left[1], max_iters=200, tol=1e-3)
+            
+            # If failed, try with different initial guesses (up to 5 attempts)
+            if ik_result is None:
+                for attempt in range(5):
+                    init_guess = tuple(np.random.uniform(-np.pi, np.pi, self.left_arm.get_num_joints()))
+                    ik_result = self.left_arm.ik_iterative(
+                        local_left[0], local_left[1],
+                        theta_init=init_guess,
+                        max_iters=200,
+                        tol=1e-3
+                    )
+                    if ik_result is not None:
+                        break
+            
+            if ik_result is not None:
+                left_reachable = True
                 if verbose:
-                    print(f"[check_reachability] Left IK EXCEPTION for global {point}, local {local_left}: {e}", flush=True)
-        else:
+                    print(f"[check_reachability] Left IK SUCCESS for global {point}, local {local_left}, dist={dist_left:.3f}", flush=True)
+            else:
+                if verbose:
+                    if not left_distance_ok:
+                        print(f"[check_reachability] Left distance check FAILED (dist={dist_left:.3f}, range=[{left_min_reach:.3f}, {left_max_reach:.3f}]) AND IK FAILED after 6 attempts", flush=True)
+                    else:
+                        print(f"[check_reachability] Left IK FAILED after 6 attempts for global {point}, local {local_left}, dist={dist_left:.3f}", flush=True)
+        except Exception as e:
             if verbose:
-                print(f"[check_reachability] Left distance check FAILED for global {point}, dist={dist_left:.3f}, range=[{left_min_reach:.3f}, {left_max_reach:.3f}]", flush=True)
+                print(f"[check_reachability] Left IK EXCEPTION for global {point}, local {local_left}: {e}", flush=True)
         
-        if right_distance_ok:
-            # Convert to right arm's local frame
-            local_right = point - self.dual_arm.right_base
-            # Try IK (use ik_iterative, the actual method name)
-            try:
-                ik_result = self.right_arm.ik_iterative(local_right[0], local_right[1])
-                if ik_result is not None:
-                    right_reachable = True
-                    if verbose:
-                        print(f"[check_reachability] Right IK SUCCESS for global {point}, local {local_right}", flush=True)
-                else:
-                    if verbose:
-                        print(f"[check_reachability] Right IK FAILED (returned None) for global {point}, local {local_right}, dist={dist_right:.3f}", flush=True)
-            except Exception as e:
+        # Always try IK for right arm (distance check is just a hint)
+        local_right = point - self.dual_arm.right_base
+        try:
+            ik_result = self.right_arm.ik_iterative(local_right[0], local_right[1], max_iters=200, tol=1e-3)
+            
+            # If failed, try with different initial guesses (up to 5 attempts)
+            if ik_result is None:
+                for attempt in range(5):
+                    init_guess = tuple(np.random.uniform(-np.pi, np.pi, self.right_arm.get_num_joints()))
+                    ik_result = self.right_arm.ik_iterative(
+                        local_right[0], local_right[1],
+                        theta_init=init_guess,
+                        max_iters=200,
+                        tol=1e-3
+                    )
+                    if ik_result is not None:
+                        break
+            
+            if ik_result is not None:
+                right_reachable = True
                 if verbose:
-                    print(f"[check_reachability] Right IK EXCEPTION for global {point}, local {local_right}: {e}", flush=True)
-        else:
+                    print(f"[check_reachability] Right IK SUCCESS for global {point}, local {local_right}, dist={dist_right:.3f}", flush=True)
+            else:
+                if verbose:
+                    if not right_distance_ok:
+                        print(f"[check_reachability] Right distance check FAILED (dist={dist_right:.3f}, range=[{right_min_reach:.3f}, {right_max_reach:.3f}]) AND IK FAILED after 6 attempts", flush=True)
+                    else:
+                        print(f"[check_reachability] Right IK FAILED after 6 attempts for global {point}, local {local_right}, dist={dist_right:.3f}", flush=True)
+        except Exception as e:
             if verbose:
-                print(f"[check_reachability] Right distance check FAILED for global {point}, dist={dist_right:.3f}, range=[{right_min_reach:.3f}, {right_max_reach:.3f}]", flush=True)
+                print(f"[check_reachability] Right IK EXCEPTION for global {point}, local {local_right}: {e}", flush=True)
         
         return {
             'left_reachable': left_reachable,
@@ -226,8 +255,10 @@ class HandoffPlanner:
                 # Neither can reach goal - problem is unsolvable
                 delivery_arm = None
             
-            if grab_arm is None or delivery_arm is None:
-                raise ValueError("Item start or goal position is unreachable by both arms")
+            if grab_arm is None:
+                raise ValueError(f"Item start position {start_pos} is unreachable by any arm")
+            if delivery_arm is None:
+                raise ValueError(f"Item goal position {goal_pos} is unreachable by any arm")
             
             return {
                 'grab_arm': grab_arm,
@@ -598,20 +629,47 @@ class HandoffPlanner:
             print(f"[_get_config_for_position] IK exception for {arm}: {e}")
             return None
         
-        # Get idle config for other arm (all joints at 0 = pointing north)
+        # Get config for other arm
+        # For handoff scenarios, the other arm should ALSO be at the handoff point (both arms meet there)
+        # For single-arm scenarios, the other arm can be idle
         num_joints = arm_obj.get_num_joints()
-        idle_config = np.zeros(num_joints)
+        
+        # Try to have the other arm also reach the same position (for handoff)
+        other_arm = self.right_arm if arm == 'left' else self.left_arm
+        other_base = self.dual_arm.right_base if arm == 'left' else self.dual_arm.left_base
+        other_local_pos = position - other_base
+        
+        try:
+            other_arm_config = other_arm.ik_iterative(other_local_pos[0], other_local_pos[1], max_iters=200, tol=1e-3)
+            if other_arm_config is None:
+                # If other arm can't reach the position, use idle config
+                print(f"[_get_config_for_position] Other arm can't reach position, using idle", flush=True)
+                other_arm_config = np.zeros(num_joints)
+            else:
+                print(f"[_get_config_for_position] Other arm can also reach position", flush=True)
+        except:
+            # Fall back to idle if IK fails
+            other_arm_config = np.zeros(num_joints)
         
         # Construct full dual-arm config
         if arm == 'left':
-            full_config = np.concatenate([np.array(arm_config), idle_config])
+            full_config = np.concatenate([np.array(arm_config), np.array(other_arm_config)])
         else:
-            full_config = np.concatenate([idle_config, np.array(arm_config)])
+            full_config = np.concatenate([np.array(other_arm_config), np.array(arm_config)])
         
         # Validate the configuration
         if not self.dual_arm.is_valid_configuration(full_config):
-            print(f"[_get_config_for_position] Configuration is invalid (collision or limits)")
-            return None
+            print(f"[_get_config_for_position] Configuration with other arm at position is invalid, trying with other arm idle", flush=True)
+            # Try with other arm idle as fallback
+            idle_config = np.zeros(num_joints)
+            if arm == 'left':
+                full_config = np.concatenate([np.array(arm_config), idle_config])
+            else:
+                full_config = np.concatenate([idle_config, np.array(arm_config)])
+            
+            if not self.dual_arm.is_valid_configuration(full_config):
+                print(f"[_get_config_for_position] Configuration is invalid even with other arm idle (collision or limits)")
+                return None
         
         print(f"[_get_config_for_position] ✓ Valid config found: {full_config}")
         return full_config

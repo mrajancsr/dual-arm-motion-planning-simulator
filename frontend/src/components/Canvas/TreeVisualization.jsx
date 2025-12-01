@@ -11,8 +11,14 @@ export function drawTree(canvas, tree, armType, armParams, leftBase, rightBase) 
   
   // Draw edges first (so they're behind nodes)
   nodes.forEach((node) => {
-    if (node.parent !== null && node.parent >= 0) {
+    // Validate node has required properties
+    if (!node || !node.config) return;
+    
+    if (node.parent !== null && node.parent !== undefined && node.parent >= 0) {
       const parentNode = nodes[node.parent];
+      
+      // Validate parent node exists and has config
+      if (!parentNode || !parentNode.config) return;
       
       // Convert to workspace positions
       const nodeWS = configToWorkspace(
@@ -38,6 +44,9 @@ export function drawTree(canvas, tree, armType, armParams, leftBase, rightBase) 
   
   // Draw nodes
   nodes.forEach((node) => {
+    // Validate node has required properties
+    if (!node || !node.config) return;
+    
     const ws = configToWorkspace(
       node.config,
       armType,

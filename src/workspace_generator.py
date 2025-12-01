@@ -40,17 +40,47 @@ class WorkspaceGenerator:
         Returns:
             Tuple of (x_points, y_points) arrays
         """
+        num_joints = self.arm.get_num_joints()
+        joint_limits = self.arm.get_joint_limits()
+        
         theta1_vals = np.linspace(theta1_range[0], theta1_range[1], self.resolution)
         theta2_vals = np.linspace(theta2_range[0], theta2_range[1], self.resolution)
         
         x_points = []
         y_points = []
         
-        for theta1 in theta1_vals:
-            for theta2 in theta2_vals:
-                pos = self.arm.forward_kinematics(theta1, theta2)
-                x_points.append(pos[0])
-                y_points.append(pos[1])
+        if num_joints == 2:
+            # 2-link arm: sample both joints
+            for theta1 in theta1_vals:
+                for theta2 in theta2_vals:
+                    pos = self.arm.forward_kinematics(theta1, theta2)
+                    x_points.append(pos[0])
+                    y_points.append(pos[1])
+        
+        elif num_joints == 3:
+            # 3-link arm: sample all three joints (with reduced resolution to avoid explosion)
+            reduced_res = max(10, self.resolution // 3)  # Reduce resolution for 3D sampling
+            theta1_vals_reduced = np.linspace(joint_limits[0][0], joint_limits[0][1], reduced_res)
+            theta2_vals_reduced = np.linspace(joint_limits[1][0], joint_limits[1][1], reduced_res)
+            theta3_vals_reduced = np.linspace(joint_limits[2][0], joint_limits[2][1], reduced_res)
+            
+            for theta1 in theta1_vals_reduced:
+                for theta2 in theta2_vals_reduced:
+                    for theta3 in theta3_vals_reduced:
+                        pos = self.arm.forward_kinematics(theta1, theta2, theta3)
+                        x_points.append(pos[0])
+                        y_points.append(pos[1])
+        
+        else:
+            # Generic N-link arm (6-link, etc.): sample first two joints, others at 0
+            # This gives an approximation of the reachable workspace
+            for theta1 in theta1_vals:
+                for theta2 in theta2_vals:
+                    # Set other joints to 0 (straight configuration)
+                    angles = [theta1, theta2] + [0.0] * (num_joints - 2)
+                    pos = self.arm.forward_kinematics(*angles)
+                    x_points.append(pos[0])
+                    y_points.append(pos[1])
                 
         return np.array(x_points), np.array(y_points)
     

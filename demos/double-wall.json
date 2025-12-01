@@ -1,0 +1,85 @@
+{
+  "id": "double-wall",
+  "metadata": {
+    "name": "Double Wall",
+    "description": "Navigate through two layers of obstacles (6 total).",
+    "difficulty": "complex",
+    "created": "2025-12-01T06:58:56.770199Z",
+    "version": "1.0"
+  },
+  "config": {
+    "arm_type": "2-link",
+    "arm_params": {
+      "L1": 1.0,
+      "L2": 0.7
+    },
+    "item_start": [
+      -0.6,
+      1.6
+    ],
+    "item_goal": [
+      0.6,
+      1.6
+    ],
+    "left_base_x": -1.0,
+    "right_base_x": 1.0,
+    "obstacles": [
+      {
+        "type": "circle",
+        "center": [
+          -0.3,
+          0.9
+        ],
+        "radius": 0.2
+      },
+      {
+        "type": "circle",
+        "center": [
+          0,
+          0.9
+        ],
+        "radius": 0.2
+      },
+      {
+        "type": "circle",
+        "center": [
+          0.3,
+          0.9
+        ],
+        "radius": 0.2
+      },
+      {
+        "type": "circle",
+        "center": [
+          -0.3,
+          1.1
+        ],
+        "radius": 0.2
+      },
+      {
+        "type": "circle",
+        "center": [
+          0,
+          1.1
+        ],
+        "radius": 0.2
+      },
+      {
+        "type": "circle",
+        "center": [
+          0.3,
+          1.1
+        ],
+        "radius": 0.2
+      }
+    ],
+    "rrt_params": {
+      "max_iterations": 8000,
+      "step_size": 0.15,
+      "goal_threshold": 0.2,
+      "use_kdtree": true,
+      "workspace_weight": 0.3,
+      "use_adaptive_step": true
+    }
+  }
+}

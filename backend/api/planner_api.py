@@ -10,6 +10,7 @@ Provides REST endpoints for:
 
 import sys
 import os
+import json
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -780,6 +781,117 @@ def plan_with_handoff():
 def health_check():
     """Health check endpoint."""
     return jsonify({'status': 'ok', 'jobs_count': len(jobs)})
+
+
+# Demo Management Endpoints
+
+@app.route('/api/demos', methods=['GET'])
+def list_demos():
+    """List all available demo configurations."""
+    try:
+        demos_dir = Path(__file__).parent.parent.parent / 'demos'
+        print(f"[DEBUG] Looking for demos in: {demos_dir.absolute()}", flush=True)
+        print(f"[DEBUG] Directory exists: {demos_dir.exists()}", flush=True)
+        
+        if not demos_dir.exists():
+            return jsonify({'demos': []})
+        
+        demos = []
+        json_files = list(demos_dir.glob('*.json'))
+        print(f"[DEBUG] Found {len(json_files)} JSON files", flush=True)
+        
+        for demo_file in json_files:
+            print(f"[DEBUG] Loading demo: {demo_file.name}", flush=True)
+            try:
+                with open(demo_file, 'r') as f:
+                    demo_data = json.load(f)
+                    # Only include metadata and id for listing
+                    demos.append({
+                        'id': demo_data['id'],
+                        'metadata': demo_data['metadata']
+                    })
+                    print(f"[DEBUG] Successfully loaded: {demo_data['id']}", flush=True)
+            except Exception as e:
+                print(f"Error loading demo {demo_file}: {e}", flush=True)
+                continue
+        
+        # Sort by difficulty: simple, medium, complex
+        difficulty_order = {'simple': 0, 'medium': 1, 'complex': 2}
+        demos.sort(key=lambda d: difficulty_order.get(d['metadata'].get('difficulty', 'medium'), 1))
+        
+        return jsonify({'demos': demos})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/demos/<demo_id>', methods=['GET'])
+def get_demo(demo_id):
+    """Get a specific demo configuration with saved results."""
+    try:
+        demos_dir = Path(__file__).parent.parent.parent / 'demos'
+        demo_file = demos_dir / f'{demo_id}.json'
+        
+        if not demo_file.exists():
+            return jsonify({'error': 'Demo not found'}), 404
+        
+        with open(demo_file, 'r') as f:
+            demo_data = json.load(f)
+        
+        return jsonify(demo_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/demos', methods=['POST'])
+def save_demo():
+    """
+    Save a new user demo configuration.
+    
+    Request body should contain demo data with:
+    - metadata (name, description, etc.)
+    - config (environment configuration)
+    - saved_results (optional, planning results)
+    """
+    try:
+        demo_data = request.json
+        
+        # Validate required fields
+        if 'metadata' not in demo_data or 'config' not in demo_data:
+            return jsonify({'error': 'Missing required fields: metadata and config'}), 400
+        
+        # Generate ID if not provided
+        if 'id' not in demo_data:
+            # Create ID from name or use UUID
+            name = demo_data['metadata'].get('name', 'custom')
+            demo_id = name.lower().replace(' ', '-') + '-' + str(uuid.uuid4())[:8]
+            demo_data['id'] = demo_id
+        else:
+            demo_id = demo_data['id']
+        
+        # Add created timestamp if not present
+        if 'created' not in demo_data['metadata']:
+            from datetime import datetime, timezone
+            demo_data['metadata']['created'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        # Save to demos directory
+        demos_dir = Path(__file__).parent.parent.parent / 'demos'
+        demos_dir.mkdir(exist_ok=True)
+        
+        demo_file = demos_dir / f'{demo_id}.json'
+        with open(demo_file, 'w') as f:
+            json.dump(demo_data, f, indent=2)
+        
+        return jsonify({
+            'success': True,
+            'demo_id': demo_id,
+            'message': f'Demo saved as {demo_id}'
+        })
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR] Save demo exception: {error_trace}")
+        return jsonify({'error': str(e), 'traceback': error_trace}), 500
 
 
 if __name__ == '__main__':

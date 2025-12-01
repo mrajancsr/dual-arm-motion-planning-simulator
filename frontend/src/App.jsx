@@ -9,13 +9,17 @@ import { ArmSelector } from './components/Controls/ArmSelector';
 import { ConfigPanel } from './components/Controls/ConfigPanel';
 import { OptimizationToggles } from './components/Controls/OptimizationToggles';
 import { StartStopButton } from './components/Controls/StartStopButton';
+import { ClearButton } from './components/Controls/ClearButton';
 import { MetricsDisplay } from './components/Status/MetricsDisplay';
 import { StatusIndicator } from './components/Status/StatusIndicator';
+import { DemoNavBar } from './components/Demos/DemoNavBar';
+import { DemoControls } from './components/Demos/DemoControls';
 import { drawArms } from './components/Canvas/ArmVisualization';
 import { drawTree } from './components/Canvas/TreeVisualization';
 import { drawPath } from './components/Canvas/PathVisualization';
 import { drawObstacles } from './components/Canvas/ObstacleManager';
 import { usePlanner } from './hooks/usePlanner';
+import { useDemo } from './hooks/useDemo';
 import { useCanvas } from './hooks/useCanvas';
 import { configToWorkspace } from './utils/kinematics';
 import { screenToWorld } from './utils/geometry';
@@ -84,8 +88,22 @@ function App() {
     handoffPoint,
     phases,
     startPlanning, 
-    stopPlanning
+    stopPlanning,
+    clearAll
   } = usePlanner();
+  
+  const {
+    demos,
+    activeDemoId,
+    activeDemoData,
+    resultMode,
+    savedResults,
+    loadDemo,
+    resetToSaved,
+    switchToFresh,
+    saveAsDemo,
+    clearDemo
+  } = useDemo();
   
   const canvas = useCanvas({ minX: -4, maxX: 4, minY: -2, maxY: 4 });
   
@@ -109,8 +127,6 @@ function App() {
       goal: newGoal,
       arm_params: DEFAULT_ARM_PARAMS[newType]
     });
-    
-    setCurrentConfig(newStart);
   };
   
   // Handle start planning
@@ -144,6 +160,117 @@ function App() {
       console.error('Planning error:', error);
       alert(`Error starting planning: ${error.message}`);
     }
+  };
+  
+  // Handle clear all
+  const handleClear = () => {
+    // Stop any ongoing planning
+    stopPlanning();
+    
+    // Clear planner state (tree, path, strategy, etc.)
+    clearAll();
+    
+    // Clear demo state
+    clearDemo();
+    
+    // Reset configuration to defaults
+    setConfig({
+      ...DEFAULT_CONFIG,
+      arm_type: armType,
+      arm_params: DEFAULT_ARM_PARAMS[armType],
+      obstacles: [
+        { type: 'circle', center: [0, 1.0], radius: 0.3 }
+      ]
+    });
+    
+    // Reset item positions
+    setItemStartPos(DEFAULT_ITEM_START);
+    setItemGoalPos(DEFAULT_ITEM_GOAL);
+    
+    // Reset base positions
+    setLeftBaseX(DEFAULT_LEFT_BASE_X);
+    setRightBaseX(DEFAULT_RIGHT_BASE_X);
+    
+    // Clear dragging state
+    setDragging(null);
+    
+    console.log('Cleared all configuration and visuals');
+  };
+  
+  // Handle demo selection
+  const handleSelectDemo = async (demoId) => {
+    console.log('Loading demo:', demoId);
+    
+    const demoData = await loadDemo(demoId);
+    if (!demoData) return;
+    
+    // Load demo configuration
+    const demoConfig = demoData.config;
+    
+    // Update arm type and params
+    setArmType(demoConfig.arm_type);
+    setConfig(prev => ({
+      ...prev,
+      arm_type: demoConfig.arm_type,
+      arm_params: demoConfig.arm_params,
+      obstacles: demoConfig.obstacles || [],
+      ...demoConfig.rrt_params
+    }));
+    
+    // Update positions
+    setItemStartPos(demoConfig.item_start);
+    setItemGoalPos(demoConfig.item_goal);
+    setLeftBaseX(demoConfig.left_base_x);
+    setRightBaseX(demoConfig.right_base_x);
+    
+    // Clear any ongoing planning
+    stopPlanning();
+    clearAll();
+    
+    console.log('Demo loaded successfully');
+  };
+  
+  // Handle reset to saved results
+  const handleResetToSaved = () => {
+    resetToSaved();
+    console.log('Reset to saved results');
+  };
+  
+  // Handle rerun fresh
+  const handleRerunFresh = () => {
+    switchToFresh();
+    handleStartPlanning();
+  };
+  
+  // Handle save as demo
+  const handleSaveAsDemo = async () => {
+    const currentState = {
+      armType,
+      armParams: config.arm_params,
+      itemStart: itemStartPos,
+      itemGoal: itemGoalPos,
+      leftBaseX,
+      rightBaseX,
+      obstacles: config.obstacles,
+      rrtParams: {
+        max_iterations: config.max_iterations,
+        step_size: config.step_size,
+        goal_threshold: config.goal_threshold,
+        use_kdtree: config.use_kdtree,
+        workspace_weight: config.workspace_weight,
+        use_adaptive_step: config.use_adaptive_step
+      },
+      results: {
+        strategy,
+        handoffPoint,
+        phases,
+        path,
+        tree,
+        progress
+      }
+    };
+    
+    await saveAsDemo(currentState);
   };
   
   // Compute IK for a single arm to reach a target
@@ -243,6 +370,13 @@ function App() {
     setDragging(null);
   };
   
+  // Get current display data (saved or fresh)
+  const displayTree = resultMode === 'saved' && savedResults?.tree ? savedResults.tree : tree;
+  const displayPath = resultMode === 'saved' && savedResults?.path ? { path: savedResults.path } : path;
+  const displayStrategy = resultMode === 'saved' && savedResults?.strategy ? savedResults.strategy : strategy;
+  const displayHandoffPoint = resultMode === 'saved' && savedResults?.handoff_point ? savedResults.handoff_point : handoffPoint;
+  const displayPhases = resultMode === 'saved' && savedResults?.phases ? savedResults.phases : phases;
+  
   // Draw visualization
   useEffect(() => {
     if (!canvas.canvasRef.current) return;
@@ -253,10 +387,10 @@ function App() {
     drawObstacles(canvas, config.obstacles);
     
     // Draw tree if available and enabled
-    if (showTree && tree && tree.nodes && tree.nodes.length > 0) {
+    if (showTree && displayTree && displayTree.nodes && displayTree.nodes.length > 0) {
       drawTree(
         canvas,
-        tree,
+        displayTree,
         armType,
         config.arm_params,
         leftBase,
@@ -265,15 +399,15 @@ function App() {
     }
     
     // Draw path if available
-    if (path && path.path && path.path.length > 0) {
-      drawPath(canvas, path);
+    if (displayPath && displayPath.path && displayPath.path.length > 0) {
+      drawPath(canvas, displayPath);
     }
     
     // Draw current arm configuration
     // If planning is complete and we have a path, show final configuration
     // Otherwise, show the start configuration (arms pointing north)
-    const displayConfig = status === 'completed' && path && path.path.length > 0 ? 
-      path.path[path.path.length - 1].config : 
+    const displayConfig = (status === 'completed' || resultMode === 'saved') && displayPath && displayPath.path && displayPath.path.length > 0 ? 
+      displayPath.path[displayPath.path.length - 1].config : 
       config.start;
     
     drawArms(
@@ -307,18 +441,18 @@ function App() {
     canvas.drawText('GOAL', [itemGoalPos[0], itemGoalPos[1] - 0.3], '#fbbf24', 12);
     
     // Draw handoff point if available (with enhanced visualization)
-    if (handoffPoint) {
+    if (displayHandoffPoint) {
       // Draw connection lines
-      canvas.drawLine(leftBase, handoffPoint, '#9333ea33', 2);
-      canvas.drawLine(rightBase, handoffPoint, '#9333ea33', 2);
+      canvas.drawLine(leftBase, displayHandoffPoint, '#9333ea33', 2);
+      canvas.drawLine(rightBase, displayHandoffPoint, '#9333ea33', 2);
       
       // Draw handoff point with glow effect
-      canvas.drawCircle(handoffPoint, 0.25, '#9333ea44', true);
-      canvas.drawCircle(handoffPoint, 0.18, '#9333ea', true);
-      canvas.drawCircle(handoffPoint, 0.12, '#a855f7', true);
+      canvas.drawCircle(displayHandoffPoint, 0.25, '#9333ea44', true);
+      canvas.drawCircle(displayHandoffPoint, 0.18, '#9333ea', true);
+      canvas.drawCircle(displayHandoffPoint, 0.12, '#a855f7', true);
       
       // Label
-      canvas.drawText('HANDOFF', [handoffPoint[0], handoffPoint[1] - 0.4], '#a855f7', 14, 'bold');
+      canvas.drawText('HANDOFF', [displayHandoffPoint[0], displayHandoffPoint[1] - 0.4], '#a855f7', 14, 'bold');
     }
     
     // Draw bases (larger and more visible for dragging)
@@ -327,12 +461,21 @@ function App() {
     canvas.drawText('LEFT', [leftBase[0], leftBase[1] - 0.3], '#3b82f6', 12);
     canvas.drawText('RIGHT', [rightBase[0], rightBase[1] - 0.3], '#ef4444', 12);
     
-  }, [canvas, config, armType, tree, path, status, leftBase, rightBase, dragging, showTree, handoffPoint]);
+  }, [canvas, config, armType, displayTree, displayPath, status, leftBase, rightBase, dragging, showTree, displayHandoffPoint, resultMode]);
   
   const isPlanning = status === 'running' || status === 'starting';
   
   return (
-    <div className="app">
+    <div className="app flex flex-col h-screen">
+      {/* Demo Navigation Bar */}
+      <DemoNavBar
+        demos={demos}
+        activeDemoId={activeDemoId}
+        onSelectDemo={handleSelectDemo}
+        isPlanning={isPlanning}
+      />
+      
+      <div className="flex flex-1 overflow-hidden">
       <Sidebar>
         <StatusIndicator status={status} error={error} progress={progress} />
         
@@ -360,28 +503,44 @@ function App() {
           onStop={stopPlanning}
         />
         
+        <ClearButton
+          onClear={handleClear}
+          disabled={status === 'running' || status === 'starting'}
+        />
+        
         <MetricsDisplay 
-          progress={progress} 
-          path={path}
-          planningTime={progress?.planning_time}
-          status={status}
+          progress={resultMode === 'saved' && savedResults?.metrics ? savedResults.metrics : progress} 
+          path={displayPath}
+          planningTime={resultMode === 'saved' && savedResults?.metrics ? savedResults.metrics.planning_time : progress?.planning_time}
+          status={resultMode === 'saved' ? 'completed' : status}
+        />
+        
+        {/* Demo Controls */}
+        <DemoControls
+          activeDemoId={activeDemoId}
+          resultMode={resultMode}
+          onResetToSaved={handleResetToSaved}
+          onRerunFresh={handleRerunFresh}
+          onSaveAsDemo={handleSaveAsDemo}
+          isPlanning={isPlanning}
+          hasResults={path || savedResults}
         />
         
         {/* Handoff Plan Display */}
-        {strategy && (
+        {displayStrategy && (
           <div className="bg-gradient-to-br from-purple-900/40 to-blue-900/40 border border-purple-500/30 rounded-lg p-4 space-y-3">
             <h3 className="text-base font-bold text-purple-300 flex items-center gap-2">
               <span className="text-lg">🤝</span>
               Handoff Plan
             </h3>
             
-            {strategy.needs_handoff ? (
+            {displayStrategy.needs_handoff ? (
               <div className="space-y-2">
                 {/* Grabber Arm */}
                 <div className="bg-black/30 rounded p-2 border-l-4 border-green-500">
                   <div className="text-xs text-gray-400 uppercase tracking-wide">Grabber</div>
                   <div className="text-sm font-semibold text-green-400 capitalize">
-                    {strategy.grab_arm} Arm
+                    {displayStrategy.grab_arm} Arm
                   </div>
                   <div className="text-xs text-gray-300 mt-1">
                     Picks up item from START
@@ -389,11 +548,11 @@ function App() {
                 </div>
                 
                 {/* Handoff Location */}
-                {handoffPoint && (
+                {displayHandoffPoint && (
                   <div className="bg-black/30 rounded p-2 border-l-4 border-purple-500">
                     <div className="text-xs text-gray-400 uppercase tracking-wide">Handoff Point</div>
                     <div className="text-sm font-semibold text-purple-400">
-                      [{handoffPoint[0].toFixed(2)}, {handoffPoint[1].toFixed(2)}]
+                      [{displayHandoffPoint[0].toFixed(2)}, {displayHandoffPoint[1].toFixed(2)}]
                     </div>
                     <div className="text-xs text-gray-300 mt-1">
                       Transfer location in workspace intersection
@@ -405,7 +564,7 @@ function App() {
                 <div className="bg-black/30 rounded p-2 border-l-4 border-yellow-500">
                   <div className="text-xs text-gray-400 uppercase tracking-wide">Delivery</div>
                   <div className="text-sm font-semibold text-yellow-400 capitalize">
-                    {strategy.delivery_arm} Arm
+                    {displayStrategy.delivery_arm} Arm
                   </div>
                   <div className="text-xs text-gray-300 mt-1">
                     Delivers item to GOAL
@@ -413,16 +572,16 @@ function App() {
                 </div>
                 
                 {/* Phase Summary */}
-                {phases && phases.length > 0 && (
+                {displayPhases && displayPhases.length > 0 && (
                   <div className="pt-2 border-t border-purple-500/30">
                     <div className="flex justify-between text-xs">
                       <span className="text-gray-400">Total Phases:</span>
-                      <span className="text-purple-300 font-semibold">{phases.length}</span>
+                      <span className="text-purple-300 font-semibold">{displayPhases.length}</span>
                     </div>
                     <div className="flex justify-between text-xs mt-1">
                       <span className="text-gray-400">Total Waypoints:</span>
                       <span className="text-purple-300 font-semibold">
-                        {phases.reduce((sum, p) => sum + p.path_length, 0)}
+                        {displayPhases.reduce((sum, p) => sum + p.path_length, 0)}
                       </span>
                     </div>
                   </div>
@@ -437,7 +596,7 @@ function App() {
                     Single Arm Solution
                   </div>
                   <div className="text-xs text-gray-300 mt-1 capitalize">
-                    Using {strategy.chosen_arm} arm only
+                    Using {displayStrategy.chosen_arm} arm only
                   </div>
                 </div>
                 
@@ -461,9 +620,9 @@ function App() {
               className="w-5 h-5 accent-blue-500"
             />
           </label>
-          {tree && tree.nodes && (
+          {displayTree && displayTree.nodes && (
             <div className="text-xs text-gray-400 px-2">
-              {tree.nodes.length} nodes explored
+              {displayTree.nodes.length} nodes explored
             </div>
           )}
         </div>
@@ -508,7 +667,7 @@ function App() {
                 <div className="w-3 h-3 rounded-full bg-yellow-500 border border-yellow-500"></div>
                 <span className="text-gray-300 text-xs">GOAL item</span>
               </div>
-              {handoffPoint && (
+              {displayHandoffPoint && (
                 <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-600">
                   <div className="w-3 h-3 rounded-full bg-purple-500"></div>
                   <span className="text-gray-300 text-xs">Handoff point</span>
@@ -517,7 +676,7 @@ function App() {
             </div>
           </div>
           
-          {showTree && tree && tree.nodes && tree.nodes.length > 0 && (
+          {showTree && displayTree && displayTree.nodes && displayTree.nodes.length > 0 && (
             <div className="pt-2 border-t border-gray-600">
               <div className="font-semibold text-white text-xs mb-1">RRT* Tree</div>
               <div className="text-xs text-gray-400">Exploration paths shown</div>
@@ -525,6 +684,7 @@ function App() {
           )}
         </div>
       </MainCanvas>
+      </div>
     </div>
   );
 }

@@ -114,6 +114,25 @@ export function usePlanner() {
     setStatus('idle');
   }, []);
   
+  const clearAll = useCallback(() => {
+    // Stop any ongoing planning
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    
+    // Reset all state
+    setJobId(null);
+    setStatus('idle');
+    setProgress(null);
+    setTree(null);
+    setPath(null);
+    setError(null);
+    setStrategy(null);
+    setHandoffPoint(null);
+    setPhases(null);
+  }, []);
+  
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -134,7 +153,8 @@ export function usePlanner() {
     handoffPoint,
     phases,
     startPlanning,
-    stopPlanning
+    stopPlanning,
+    clearAll
   };
 }
 
