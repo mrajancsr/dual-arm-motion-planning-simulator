@@ -21,7 +21,8 @@ class Environment3D:
     def __init__(self, depth_map: Optional[np.ndarray] = None, 
                  intrinsics: Optional[dict] = None,
                  snapshot_path: Optional[str] = None,
-                 safety_margin: float = 0.1):
+                 safety_margin: float = 0.1,
+                 depth_already_scaled: bool = False):
         """
         Initialize 3D environment from depth map.
         
@@ -52,21 +53,25 @@ class Environment3D:
         depth_map = np.abs(depth_map)
         
         # Load and apply depth calibration scale (convert raw units to meters)
-        depth_scale = None
-        try:
-            import json
-            import os
-            calibration_file = "calibration/depth_calibration.json"
-            if os.path.exists(calibration_file):
-                with open(calibration_file, 'r') as f:
-                    calib_data = json.load(f)
-                    depth_scale = calib_data['depth_scale']
-                    print(f"  Loaded depth calibration scale: {depth_scale:.6f}")
-                    depth_map = depth_map * depth_scale
-            else:
-                print(f"  No depth calibration found - using raw depth values")
-        except Exception as e:
-            print(f"  Warning: Could not load depth calibration: {e}")
+        # Skip if depth is already scaled (e.g., from snapshot)
+        if not depth_already_scaled:
+            depth_scale = None
+            try:
+                import json
+                import os
+                calibration_file = "calibration/depth_calibration.json"
+                if os.path.exists(calibration_file):
+                    with open(calibration_file, 'r') as f:
+                        calib_data = json.load(f)
+                        depth_scale = calib_data['depth_scale']
+                        print(f"  Loaded depth calibration scale: {depth_scale:.6f}")
+                        depth_map = depth_map * depth_scale
+                else:
+                    print(f"  No depth calibration found - using raw depth values")
+            except Exception as e:
+                print(f"  Warning: Could not load depth calibration: {e}")
+        else:
+            print(f"  Depth map already scaled - skipping calibration")
         
         # Now filter invalid depths (in meters after scaling)
         # Filter out very close depths (< 6 inches = 0.15m) - these are usually noise
@@ -303,6 +308,73 @@ class Environment3D:
     def get_obstacle_boxes(self) -> List[Dict]:
         """Get list of obstacle bounding boxes."""
         return self.obstacle_boxes
+    
+    def extract_2d_obstacles(self, working_plane) -> List[Dict]:
+        """
+        Extract 2D obstacles from 3D environment by projecting to working plane.
+        
+        Args:
+            working_plane: WorkingPlane instance
+            
+        Returns:
+            List of 2D obstacle boxes: [{"x_min", "x_max", "y_min", "y_max"}, ...]
+        """
+        # Check if working_plane has the required methods (duck typing)
+        if not (hasattr(working_plane, 'in_plane') and hasattr(working_plane, 'project_to_2d')):
+            raise TypeError("working_plane must have in_plane() and project_to_2d() methods")
+        
+        # Get point cloud
+        point_cloud = self.get_point_cloud(downsample=4)
+        
+        if len(point_cloud) == 0:
+            return []
+        
+        # Filter points in plane
+        in_plane_points = []
+        for point in point_cloud:
+            if working_plane.in_plane(point):
+                in_plane_points.append(point)
+        
+        if len(in_plane_points) == 0:
+            return []
+        
+        in_plane_points = np.array(in_plane_points)
+        
+        # Project to 2D (returns x, y coordinates)
+        points_2d = np.array([working_plane.project_to_2d(p) for p in in_plane_points])
+        
+        # Grid-based clustering for 2D obstacles
+        x_coords = points_2d[:, 0]
+        y_coords = points_2d[:, 1]
+        
+        x_min, x_max = x_coords.min(), x_coords.max()
+        y_min, y_max = y_coords.min(), y_coords.max()
+        
+        # Divide into grid cells
+        grid_size = 0.1  # 10cm cells
+        x_bins = np.arange(x_min, x_max + grid_size, grid_size)
+        y_bins = np.arange(y_min, y_max + grid_size, grid_size)
+        
+        # Count points per cell
+        obstacle_boxes_2d = []
+        for i in range(len(x_bins) - 1):
+            for j in range(len(y_bins) - 1):
+                x_cell_min, x_cell_max = x_bins[i], x_bins[i+1]
+                y_cell_min, y_cell_max = y_bins[j], y_bins[j+1]
+                
+                # Count points in this cell
+                in_cell = ((points_2d[:, 0] >= x_cell_min) & (points_2d[:, 0] < x_cell_max) &
+                          (points_2d[:, 1] >= y_cell_min) & (points_2d[:, 1] < y_cell_max))
+                
+                if np.sum(in_cell) > 10:  # At least 10 points
+                    obstacle_boxes_2d.append({
+                        'x_min': float(x_cell_min),
+                        'x_max': float(x_cell_max),
+                        'y_min': float(y_cell_min),
+                        'y_max': float(y_cell_max)
+                    })
+        
+        return obstacle_boxes_2d
     
     def get_point_cloud(self, downsample: int = 4, 
                        workspace_bounds: Optional[Dict] = None,
