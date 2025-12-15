@@ -234,7 +234,10 @@ def create_live_pose_visualization(environment_snapshot: EnvironmentSnapshot,
                                    obstacle_boxes_2d: Optional[List[Dict]] = None,
                                    max_arm_reach: Optional[float] = None,
                                    robot_arm: Optional[Planar2LinkArm] = None,
-                                   handoff_target: Optional[Tuple[float, float]] = None):
+                                   handoff_target: Optional[Tuple[float, float]] = None,
+                                   start_config: Optional[np.ndarray] = None,
+                                   goal_config: Optional[np.ndarray] = None,
+                                   robot_path: Optional[List[np.ndarray]] = None):
     """
     Create a live-updating matplotlib figure for real-time pose visualization.
     
@@ -245,6 +248,9 @@ def create_live_pose_visualization(environment_snapshot: EnvironmentSnapshot,
         max_arm_reach: Optional maximum arm reach in meters (draws red circle around left shoulder)
         robot_arm: Optional Planar2LinkArm instance (draws robot workspace)
         handoff_target: Optional (x, y) target point for handoff (highlighted)
+        start_config: Optional start configuration [θ1, θ2, 0, 0] (draws arm at start)
+        goal_config: Optional goal configuration [θ1, θ2, 0, 0] (draws arm at goal)
+        robot_path: Optional list of configurations (draws end-effector path trace)
     
     Returns:
         Tuple of (fig, ax, update_function) where update_function(pose_data) updates the plot
@@ -315,6 +321,81 @@ def create_live_pose_visualization(environment_snapshot: EnvironmentSnapshot,
             ax.scatter([target_x], [target_y],
                       c='orange', s=400, marker='*', zorder=15,
                       edgecolors='darkorange', linewidths=2, label='Handoff Target')
+    
+    # Draw robot arm at start and goal configurations (Step 4)
+    from robot.robot_config import ROBOT_BASE_POSITION, LINK1_LENGTH, LINK2_LENGTH
+    
+    def draw_robot_arm(ax, theta1, theta2, base_pos, color, label, linestyle='-', linewidth=3, alpha=1.0):
+        """Draw a 2-link robot arm given joint angles (θ_sim)."""
+        # Apply θ_home offset for visualization
+        try:
+            from robot.calibration.theta_home import apply_offset
+            theta1_physical, theta2_physical = apply_offset(theta1, theta2)
+        except ImportError:
+            # Fallback if calibration not available
+            theta1_physical, theta2_physical = theta1, theta2
+        
+        base_x, base_y = base_pos
+        
+        # Compute joint positions using forward kinematics (with offset applied)
+        # Joint 1 (elbow)
+        elbow_x = base_x + LINK1_LENGTH * np.cos(theta1_physical)
+        elbow_y = base_y + LINK1_LENGTH * np.sin(theta1_physical)
+        
+        # End-effector
+        ee_x = base_x + LINK1_LENGTH * np.cos(theta1_physical) + LINK2_LENGTH * np.cos(theta1_physical + theta2_physical)
+        ee_y = base_y + LINK1_LENGTH * np.sin(theta1_physical) + LINK2_LENGTH * np.sin(theta1_physical + theta2_physical)
+        
+        # Draw arm segments
+        ax.plot([base_x, elbow_x], [base_y, elbow_y], 
+               color=color, linestyle=linestyle, linewidth=linewidth, 
+               alpha=alpha, zorder=8, label=label)
+        ax.plot([elbow_x, ee_x], [elbow_y, ee_y], 
+               color=color, linestyle=linestyle, linewidth=linewidth, 
+               alpha=alpha, zorder=8)
+        
+        # Draw joints
+        ax.scatter([base_x], [base_y], c=color, s=100, marker='s', 
+                  zorder=9, edgecolors='black', linewidths=1, alpha=alpha)
+        ax.scatter([elbow_x], [elbow_y], c=color, s=80, marker='o', 
+                  zorder=9, edgecolors='black', linewidths=1, alpha=alpha)
+        ax.scatter([ee_x], [ee_y], c=color, s=120, marker='D', 
+                  zorder=9, edgecolors='black', linewidths=1, alpha=alpha)
+        
+        return (ee_x, ee_y)
+    
+    # Draw start configuration
+    if start_config is not None:
+        theta1_start = start_config[0]
+        theta2_start = start_config[1]
+        draw_robot_arm(ax, theta1_start, theta2_start, ROBOT_BASE_POSITION,
+                      color='green', label='Start Config', linestyle='-', linewidth=3, alpha=0.8)
+    
+    # Draw goal configuration
+    if goal_config is not None:
+        theta1_goal = goal_config[0]
+        theta2_goal = goal_config[1]
+        draw_robot_arm(ax, theta1_goal, theta2_goal, ROBOT_BASE_POSITION,
+                      color='red', label='Goal Config', linestyle='-', linewidth=3, alpha=0.8)
+    
+    # Draw end-effector path trace
+    if robot_path is not None and len(robot_path) > 0:
+        ee_trace_x = []
+        ee_trace_y = []
+        
+        for config in robot_path:
+            theta1 = config[0]
+            theta2 = config[1]
+            base_x, base_y = ROBOT_BASE_POSITION
+            ee_x = base_x + LINK1_LENGTH * np.cos(theta1) + LINK2_LENGTH * np.cos(theta1 + theta2)
+            ee_y = base_y + LINK1_LENGTH * np.sin(theta1) + LINK2_LENGTH * np.sin(theta1 + theta2)
+            ee_trace_x.append(ee_x)
+            ee_trace_y.append(ee_y)
+        
+        # Draw path trace
+        ax.plot(ee_trace_x, ee_trace_y, 
+               color='purple', linestyle='--', linewidth=2, alpha=0.6, 
+               zorder=7, label=f'Path Trace ({len(robot_path)} waypoints)')
     
     ax.set_xlabel('X (m) - Left/Right')
     ax.set_ylabel('Y (m) - Up/Down')
@@ -476,4 +557,91 @@ def create_live_pose_visualization(environment_snapshot: EnvironmentSnapshot,
         plt.pause(0.01)
     
     return fig, ax, update_pose
+
+
+def animate_robot_path(ax, robot_path: List[np.ndarray], 
+                      base_position: Tuple[float, float],
+                      animation_speed: float = 0.05):
+    """
+    Animate the robot arm moving along the planned path.
+    
+    Args:
+        ax: Matplotlib axes to draw on
+        robot_path: List of configurations [θ1, θ2, 0, 0] to animate
+        base_position: Robot base position (x, y)
+        animation_speed: Delay between frames in seconds (default: 0.05)
+    """
+    if robot_path is None or len(robot_path) == 0:
+        print("  No path to animate")
+        return
+    
+    from robot.robot_config import LINK1_LENGTH, LINK2_LENGTH
+    
+    print(f"\n[Animation] Animating {len(robot_path)} waypoints...")
+    
+    # Create animated arm elements (will be updated each frame)
+    animated_lines = []
+    animated_joints = []
+    
+    # Create initial empty lines and joints
+    base_x, base_y = base_position
+    
+    # Line for link 1 (base to elbow) - use bright blue to distinguish from static start/goal
+    line1, = ax.plot([], [], color='cyan', linestyle='-', 
+                    linewidth=5, alpha=1.0, zorder=12, label='Animated Arm')
+    animated_lines.append(line1)
+    
+    # Line for link 2 (elbow to end-effector)
+    line2, = ax.plot([], [], color='cyan', linestyle='-', 
+                    linewidth=5, alpha=1.0, zorder=12)
+    animated_lines.append(line2)
+    
+    # Joint markers (larger and brighter for animation)
+    base_marker = ax.scatter([], [], c='cyan', s=200, marker='s', 
+                            zorder=13, edgecolors='darkblue', linewidths=3, alpha=1.0)
+    elbow_marker = ax.scatter([], [], c='cyan', s=150, marker='o', 
+                             zorder=13, edgecolors='darkblue', linewidths=3, alpha=1.0)
+    ee_marker = ax.scatter([], [], c='yellow', s=200, marker='D', 
+                          zorder=13, edgecolors='darkblue', linewidths=3, alpha=1.0)
+    animated_joints = [base_marker, elbow_marker, ee_marker]
+    
+    # Update legend to include animated arm
+    ax.legend(loc='upper right')
+    
+    # Animate through path
+    for i, config in enumerate(robot_path):
+        theta1 = config[0]
+        theta2 = config[1]
+        
+        # Compute joint positions
+        elbow_x = base_x + LINK1_LENGTH * np.cos(theta1)
+        elbow_y = base_y + LINK1_LENGTH * np.sin(theta1)
+        
+        ee_x = base_x + LINK1_LENGTH * np.cos(theta1) + LINK2_LENGTH * np.cos(theta1 + theta2)
+        ee_y = base_y + LINK1_LENGTH * np.sin(theta1) + LINK2_LENGTH * np.sin(theta1 + theta2)
+        
+        # Update link 1 (base to elbow)
+        animated_lines[0].set_data([base_x, elbow_x], [base_y, elbow_y])
+        
+        # Update link 2 (elbow to end-effector)
+        animated_lines[1].set_data([elbow_x, ee_x], [elbow_y, ee_y])
+        
+        # Update joint markers
+        animated_joints[0].set_offsets([[base_x, base_y]])
+        animated_joints[1].set_offsets([[elbow_x, elbow_y]])
+        animated_joints[2].set_offsets([[ee_x, ee_y]])
+        
+        # Update title to show progress
+        ax.set_title(f'2D Working Plane - Animating Path ({i+1}/{len(robot_path)})', 
+                    fontsize=12, fontweight='bold')
+        
+        # Redraw
+        plt.draw()
+        plt.pause(animation_speed)
+    
+    # Final update - keep animated arm visible
+    ax.set_title(f'2D Working Plane - Animation Complete ({len(robot_path)} waypoints)', 
+                fontsize=12, fontweight='bold')
+    plt.draw()
+    print(f"  ✓ Animation complete!")
 

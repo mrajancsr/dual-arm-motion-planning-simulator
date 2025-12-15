@@ -2,6 +2,18 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict
 import matplotlib.pyplot as plt
 
+# Import robot config as default values
+try:
+    from .robot_config import (
+        LINK1_LENGTH, LINK2_LENGTH, ROBOT_BASE_POSITION, JOINT_LIMITS
+    )
+except ImportError:
+    # Fallback if config not available
+    LINK1_LENGTH = 0.3
+    LINK2_LENGTH = 0.25
+    ROBOT_BASE_POSITION = (0.0, 0.0)
+    JOINT_LIMITS = [(-np.pi, np.pi), (-np.pi, np.pi)]
+
 
 class Planar2LinkArm:
     """
@@ -11,41 +23,57 @@ class Planar2LinkArm:
     """
     
     def __init__(self, 
-                 base_position: Tuple[float, float] = (0.0, 0.0),
-                 link1_length: float = 0.3,  # L1 in meters
-                 link2_length: float = 0.25,  # L2 in meters
-                 joint1_limits: Tuple[float, float] = (-np.pi, np.pi),  # θ1 range
-                 joint2_limits: Tuple[float, float] = (-np.pi, np.pi)):  # θ2 range
+                 base_position: Optional[Tuple[float, float]] = None,
+                 link1_length: Optional[float] = None,
+                 link2_length: Optional[float] = None,
+                 joint1_limits: Optional[Tuple[float, float]] = None,
+                 joint2_limits: Optional[Tuple[float, float]] = None):
         """
         Initialize 2-link planar arm.
         
         Args:
-            base_position: (x, y) position of robot base in plane coordinates
-            link1_length: Length of first link (L1) in meters
-            link2_length: Length of second link (L2) in meters
-            joint1_limits: (min, max) joint angles for θ1 in radians
-            joint2_limits: (min, max) joint angles for θ2 in radians
+            base_position: (x, y) position of robot base in plane coordinates.
+                If None, uses ROBOT_BASE_POSITION from robot_config.
+            link1_length: Length of first link (L1) in meters.
+                If None, uses LINK1_LENGTH from robot_config.
+            link2_length: Length of second link (L2) in meters.
+                If None, uses LINK2_LENGTH from robot_config.
+            joint1_limits: (min, max) joint angles for θ1 in radians.
+                If None, uses JOINT_LIMITS[0] from robot_config.
+            joint2_limits: (min, max) joint angles for θ2 in radians.
+                If None, uses JOINT_LIMITS[1] from robot_config.
         """
-        self.base_x, self.base_y = base_position
-        self.L1 = link1_length
-        self.L2 = link2_length
-        self.theta1_min, self.theta1_max = joint1_limits
-        self.theta2_min, self.theta2_max = joint2_limits
+        # Use config defaults if not provided
+        self.base_x, self.base_y = base_position if base_position is not None else ROBOT_BASE_POSITION
+        self.L1 = link1_length if link1_length is not None else LINK1_LENGTH
+        self.L2 = link2_length if link2_length is not None else LINK2_LENGTH
+        self.theta1_min, self.theta1_max = joint1_limits if joint1_limits is not None else JOINT_LIMITS[0]
+        self.theta2_min, self.theta2_max = joint2_limits if joint2_limits is not None else JOINT_LIMITS[1]
     
     def forward_kinematics(self, theta1: float, theta2: float) -> Tuple[float, float]:
         """
-        Compute end-effector position from joint angles.
+        Compute end-effector position from joint angles (θ_sim).
+        
+        Applies θ_home offset for visualization consistency.
         
         Args:
-            theta1: First joint angle (radians)
-            theta2: Second joint angle (radians)
+            theta1: First joint angle in θ_sim (radians)
+            theta2: Second joint angle in θ_sim (radians)
             
         Returns:
             (x, y) end-effector position in plane coordinates
         """
-        # Forward kinematics for 2-link arm
-        x = self.base_x + self.L1 * np.cos(theta1) + self.L2 * np.cos(theta1 + theta2)
-        y = self.base_y + self.L1 * np.sin(theta1) + self.L2 * np.sin(theta1 + theta2)
+        # Apply θ_home offset for FK
+        try:
+            from robot.calibration.theta_home import apply_offset
+            theta1_physical, theta2_physical = apply_offset(theta1, theta2)
+        except ImportError:
+            # Fallback if calibration not available
+            theta1_physical, theta2_physical = theta1, theta2
+        
+        # Forward kinematics for 2-link arm (using physical angles)
+        x = self.base_x + self.L1 * np.cos(theta1_physical) + self.L2 * np.cos(theta1_physical + theta2_physical)
+        y = self.base_y + self.L1 * np.sin(theta1_physical) + self.L2 * np.sin(theta1_physical + theta2_physical)
         
         return (x, y)
     

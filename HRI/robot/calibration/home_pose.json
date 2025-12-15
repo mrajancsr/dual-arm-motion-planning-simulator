@@ -1,0 +1,27 @@
+{
+  "timestamp": "2025-12-14T19:13:07.153818",
+  "hardware_home": {
+    "shoulder_lift": {
+      "normalized": -3.6874236874236885,
+      "raw_ticks": 1972
+    },
+    "elbow_flex": {
+      "normalized": 0.366300366300365,
+      "raw_ticks": 2055
+    }
+  },
+  "simulator_home": {
+    "theta1": 0.0,
+    "theta2": 0.0
+  },
+  "mapping_parameters": {
+    "sign_shoulder": -1,
+    "sign_elbow": 1,
+    "k_shoulder": 25.0,
+    "k_elbow": 15.0
+  },
+  "theta_home": {
+    "theta1": -0.2,
+    "theta2": 3.049999999999997
+  }
+}
